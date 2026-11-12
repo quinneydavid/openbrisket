@@ -90,8 +90,29 @@ class Engine:
     def samples(self) -> list[model.Sample]:
         return [model.Sample(*s) for s in self.state["samples"]]
 
+    def record_check(self, kind: str, data: dict, verdict: str | None, by: str, note: str, now: datetime) -> str:
+        """Store what a photo (or a look) showed, as data points. Clears the matching open request."""
+        from . import checks
+        message = checks.summary(kind, data, verdict) + (f" ({note})" if note else "")
+        payload = {"check": kind, **data}
+        if verdict:
+            payload["verdict"] = verdict
+        if by:
+            payload["by"] = by
+        self.store.add_event(self.cook_id, now, f"check-{kind}", message, payload)
+        st = self.state
+        st.setdefault("checks", {})[kind] = {"at": _iso(now), "data": data, "verdict": verdict, "by": by or None}
+        st["asks"] = [a for a in st.get("asks", []) if a["check"] != kind]
+        self.store.save_state(self.cook_id, st)
+        return message
+
     def _emit(self, events: list[Event], now: datetime) -> None:
         for e in events:
+            want = (e.data or {}).get("check")
+            if e.severity == "ask" and want in ("bark", "slice", "smoke", "probe", "raw"):
+                asks = [a for a in self.state.setdefault("asks", []) if a["check"] != want]
+                asks.append({"check": want, "since": _iso(now), "why": e.kind})
+                self.state["asks"] = asks
             self.store.add_event(self.cook_id, now, e.kind, e.message, e.data or None)
             prefix = {"alert": "ALERT: ", "ask": "CHECK: "}.get(e.severity, "")
             self.notifier.send(f"[{self.recipe.name}] {prefix}{e.message}")
@@ -103,6 +124,9 @@ class Engine:
         if kind == "meat-on":
             self.state["meat_on_at"] = _iso(now)
             self.state["samples"] = []
+            asks = [a for a in self.state.setdefault("asks", []) if a["check"] != "probe"]
+            asks.append({"check": "probe", "since": _iso(now), "why": "meat-on"})
+            self.state["asks"] = asks
             msg = "meat on"
         elif kind == "wrap":
             self.state["wrapped_at"] = _iso(now)
@@ -189,7 +213,8 @@ class Engine:
         stable = span >= 14 and pits and all(abs(p - rec.pit_target_c) <= rec.pit_tolerance_c for p in pits)
         if stable and self._once("pit-ready", now):
             return [Event("pit-ready", f"pit has held {median(pits):.0f} C for 15 minutes. Run the smoke test, then "
-                                       f"put the meat on and log it (openbrisket log meat-on).", "ask")]
+                                       f"put the meat on and log it. A photo of the smoke completes the smoke test.",
+                          "ask", {"check": "smoke"})]
         return []
 
     def _pit_checks(self, now: datetime, r: Reading) -> list[Event]:
@@ -232,13 +257,15 @@ class Engine:
                 and rate_now < STALL_RATE_C_PER_H):
             st["stall_at"] = _iso(now)
             out.append(Event("stall-start", f"stall detected at {meat:.0f} C (rising {max(rate_now, 0):.1f} C/h). "
-                                            f"Bark check: is it dark, dry and set (does not rub off)? If yes, "
-                                            f"wrapping now shortens the stall.", "ask",
+                                            f"Bark check: send a photo of the bark, or judge it yourself: is it dark, "
+                                            f"dry and set (does not rub off)? If yes, wrapping now shortens the "
+                                            f"stall.", "ask",
                              {"meat_c": round(meat, 1), "rate_c_per_h": round(rate_now, 2), "check": "bark"}))
         if rec.wrap_at_c is not None and not wrapped and meat >= rec.wrap_at_c and self._once("wrap-point", now):
             out.append(Event("wrap-point", f"meat is at {meat:.0f} C, the recipe's wrap point. Check the bark, wrap"
                                            + (f" in {rec.wrap_material}" if rec.wrap_material else "")
-                                           + ", and log it (openbrisket log wrap).", "ask", {"check": "bark"}))
+                                           + " once the bark is set, and log the wrap. A photo of the bark first is useful.",
+                             "ask", {"check": "bark"}))
         if st.get("stall_at") and meat >= rec.stall_to_c and self._once("stall-end", now):
             hours = (now - _dt(st["stall_at"])).total_seconds() / 3600
             out.append(Event("stall-end", f"through the stall after {fmt_dur(hours)}; meat at {meat:.0f} C and climbing.",
@@ -248,7 +275,7 @@ class Engine:
                                             f"Get the probe and the resting place ready.", "info"))
         if meat >= rec.meat_target_c and self._once("target", now):
             out.append(Event("target", f"meat has reached {meat:.0f} C. Probe it in several places: it should slide in "
-                                       f"like butter. When it does, take it off and log it (openbrisket log rest).",
+                                       f"like butter. When it does, take it off and log the rest.",
                              "ask", {"check": "tenderness"}))
         return out
 
@@ -299,7 +326,8 @@ class Engine:
         mins = (now - resting).total_seconds() / 60
         if mins >= rec.rest_ideal_minutes and self._once("rest-ideal", now):
             return [Event("rest-ideal", f"rested {rec.rest_ideal_minutes} min: slice and serve. Then close the cook "
-                                        f"with your score (openbrisket close --score N).", "ask", {"check": "slice"})]
+                                        f"with your score. A photo of a slice records the smoke ring and moisture.",
+                          "ask", {"check": "slice"})]
         if mins >= rec.rest_min_minutes and self._once("rest-min", now):
             return [Event("rest-min", f"minimum rest of {rec.rest_min_minutes} min reached; it can be sliced from now, "
                                       f"longer is better up to {rec.rest_ideal_minutes} min.", "info")]
@@ -435,6 +463,7 @@ class Engine:
                         "meat_c": rec.meat_target_c, "stall_from_c": rec.stall_from_c, "stall_to_c": rec.stall_to_c,
                         "wrap_at_c": rec.wrap_at_c},
             "meat_c": meat, "estimate": est, "pipeline": self.pipeline(), "checks": self.live_checks(now, r),
+            "asks": st.get("asks", []), "photo_checks": st.get("checks", {}),
         }
 
     # --- status -----------------------------------------------------------------------------------

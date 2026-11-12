@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 
 from . import __version__
+from . import checks as checkmod
 from .service import STEPS, Service, ServiceError
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -15,7 +16,8 @@ PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
     "OpenBrisket follows a barbecue cook against a recipe. It reads the pit and meat temperatures; it does "
     "not control the fire. Typical order: list_recipes, plan_cook, start_cook, smoke_test once the pit is "
-    "steady, log_step meat-on, cook_status whenever asked, log_step wrap / rest when the cook does them, "
+    "steady, log_step meat-on, cook_status whenever asked (its `asks` list names photos the cook is waiting to "
+    "be shown), record_check when you are sent a photo of the meat, log_step wrap / rest when the cook does them, "
     "close_cook with the score. Temperatures are in degrees Celsius. Times are local to the server unless "
     "they carry an offset.")
 
@@ -59,6 +61,18 @@ TOOLS = [
      "inputSchema": _obj({"step": {"type": "string", "enum": list(STEPS)},
                           "note": {"type": "string", "description": "Optional detail; required for step=note"}},
                          ["step"])},
+    {"name": "record_check",
+     "description": "Store what a photo of the cook showed, as data points in a fixed vocabulary. Look at the photo "
+                    "yourself, then call this; the photo is never stored. Checks and their fields: "
+                    + "; ".join(f"{k}: {checkmod.describe(k)}, verdict {'/'.join(v['verdicts'])}"
+                                for k, v in checkmod.VOCAB.items())
+                    + ". Give only the fields you can actually see.",
+     "inputSchema": _obj({"check": {"type": "string", "enum": list(checkmod.VOCAB)},
+                          "data": {"type": "object", "description": "The fields for this check, from the list above"},
+                          "verdict": {"type": "string", "description": "Your call, from the verdicts for this check"},
+                          "note": {"type": "string", "description": "One short sentence, optional"},
+                          "by": {"type": "string", "description": "Who judged it, e.g. your model name"}},
+                         ["check", "data"])},
     {"name": "close_cook",
      "description": "Close the open cook with its result. abandon=true closes a cook that went wrong without a score.",
      "inputSchema": _obj({"score": {"type": "number", "description": "0 to 10"},
@@ -85,6 +99,9 @@ def _call(service: Service, name: str, a: dict):
         return service.smoke_test()
     if name == "log_step":
         return service.log_step(a.get("step", ""), a.get("note", ""))
+    if name == "record_check":
+        return service.record_check(a.get("check", ""), a.get("data"), a.get("verdict"), a.get("by", ""),
+                                    a.get("note", ""))
     if name == "close_cook":
         return service.close(a.get("score"), a.get("cooked_weight_kg"), a.get("notes", ""), bool(a.get("abandon")))
     if name == "cook_history":

@@ -85,6 +85,8 @@ def make_handler(service: Service):
                     return self._json(service.status())
                 if path == "/api/recipes":
                     return self._json(service.list_recipes())
+                if path == "/api/checks":
+                    return self._json(service.check_vocabulary())
                 if path == "/api/cooks":
                     return self._json(service.cooks())
                 if path.startswith("/api/cooks/"):
@@ -117,6 +119,9 @@ def make_handler(service: Service):
                                                     body.get("probes") or body.get("probe"), body.get("probe_labels")))
                 if path == "/api/log":
                     return self._json(service.log_step(body.get("step", ""), body.get("note", "")))
+                if path == "/api/check":
+                    return self._json(service.record_check(body.get("check", ""), body.get("data"), body.get("verdict"),
+                                                           body.get("by", ""), body.get("note", "")))
                 if path == "/api/smoke-test":
                     return self._json(service.smoke_test())
                 if path == "/api/close":

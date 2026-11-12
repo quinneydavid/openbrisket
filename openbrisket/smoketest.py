@@ -23,7 +23,7 @@ class Check:
 
 
 def run(recipe: Recipe, reading: Reading, recent: list, notifier: Notifier | None, probe_no=1,
-        now: datetime | None = None) -> list[Check]:
+        now: datetime | None = None, smoke_check: dict | None = None) -> list[Check]:
     """`recent` is the engine's raw history: [iso time, pit, fan] rows, oldest first."""
     now = now or reading.at
     checks: list[Check] = []
@@ -72,7 +72,15 @@ def run(recipe: Recipe, reading: Reading, recent: list, notifier: Notifier | Non
         checks.append(Check("probes", PASS, "food probe " + ", ".join(f"{n} reads {v:.0f} C"
                                                                      for n, v in values.items())))
 
-    checks.append(Check("clean-smoke", SKIP, "photo check not available yet: look for thin blue smoke, not thick white"))
+    fresh = smoke_check and now - datetime.fromisoformat(smoke_check["at"]) <= timedelta(minutes=30)
+    if fresh:
+        colour = smoke_check["data"].get("colour", "?")
+        clean = colour in ("thin-blue", "clear") and smoke_check.get("verdict") != "wait"
+        checks.append(Check("clean-smoke", PASS if clean else FAIL,
+                            f"smoke is {colour}" + ("" if clean else ": wait for it to thin out before the meat goes on")))
+    else:
+        checks.append(Check("clean-smoke", SKIP, "no smoke check in the last 30 min: send a photo of the smoke, or "
+                                                 "look for thin blue smoke, not thick white"))
     checks.append(_notify(notifier))
     return checks
 

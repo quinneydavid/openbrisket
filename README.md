@@ -130,9 +130,17 @@ the meat heats in proportion to the gap between pit and meat, and much more slow
 It starts from the recipe's timing and shifts towards your cook's own readings as they come in. It is
 a first version. It has been tested against simulated cooks, not yet against many real ones.
 
+## Photo checks
+
+At certain moments OpenBrisket asks to see something: the smoke before the meat goes on, where the
+probe sits, the bark in the stall, a slice at the end. You send the photo to your agent (see Agents).
+The agent looks at it and stores a small record in a fixed vocabulary, for example
+`bark: colour mahogany, set firm, coverage 90 -> wrap`. The photo is never stored or uploaded by
+OpenBrisket. Without an agent you can post the same record to `/api/check` yourself, or just follow
+the note, which always says what to look for by eye.
+
 ## Not here yet
 
-- Photo checks: sending a photo of the bark or the slice and getting data points back.
 - Opening each cook as a GitHub pull request, and recipe suggestions as pull requests after a cook.
 - Learning from finished cooks.
 

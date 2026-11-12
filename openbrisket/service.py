@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import yaml
 
-from . import notify, plan as planmod, recipes, settings, smoketest, sources
+from . import checks as checkmod, notify, plan as planmod, recipes, settings, smoketest, sources
 from .cook import Engine
 from .store import MAX_PROBES, Store
 
@@ -278,13 +278,32 @@ class Service:
             ev = e.manual(kind, note.strip(), _now())
             return {"cook": e.cook_id, "logged": ev.message}
 
+    def record_check(self, kind: str, data: dict | None, verdict: str | None = None, by: str = "",
+                     note: str = "") -> dict:
+        """Store what a photo showed as data points (the photo itself is never stored)."""
+        with self.lock:
+            e = self._need_engine()
+            try:
+                clean = checkmod.validate(str(kind), data, verdict)
+            except checkmod.CheckError as err:
+                raise ServiceError(str(err)) from None
+            message = e.record_check(str(kind), clean, verdict, str(by)[:60], str(note).strip()[:200], _now())
+            return {"cook": e.cook_id, "logged": message}
+
+    def check_vocabulary(self) -> dict:
+        return {kind: {"title": spec["title"], "verdicts": spec["verdicts"],
+                       "fields": {k: ({"choices": f[1]} if f[0] == "choice" else {"min": f[1], "max": f[2]})
+                                  for k, f in spec["fields"].items()}}
+                for kind, spec in checkmod.VOCAB.items()}
+
     def smoke_test(self) -> dict:
         with self.lock:
             e = self._need_engine()
             r = self.read_now()
             if r is None:
                 r = sources.Reading(at=_now(), connected=False)
-            checks = smoketest.run(e.recipe, r, e.state.get("recent", []), e.notifier, e.probe_nos)
+            checks = smoketest.run(e.recipe, r, e.state.get("recent", []), e.notifier, e.probe_nos,
+                                   smoke_check=(e.state.get("checks") or {}).get("smoke"))
             ok = smoketest.passed(checks)
             e.store.add_event(e.cook_id, r.at, "smoke-test", "smoke test " + ("passed" if ok else "failed"),
                               {c.name: c.result for c in checks})

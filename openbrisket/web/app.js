@@ -338,6 +338,14 @@ function cookView(st, detail) {
 
   const checks = box("Checks", h("ul", { class: "rows" }, c.checks.map((k) => h("li", {}, stateCell(k.state), h("span", { class: "name" }, k.name), h("span", { class: "detail" }, k.detail)))));
 
+  const asked = (c.asks || []).map((a) => h("li", {}, stateCell("pending"), h("span", { class: "name" }, a.check),
+    h("span", { class: "detail" }, `photo wanted since ${clock(a.since)}`)));
+  const seen = Object.entries(c.photo_checks || {}).map(([kind, k]) => h("li", {}, stateCell("pass"), h("span", { class: "name" }, kind),
+    h("span", { class: "detail" }, Object.entries(k.data).map(([f, v]) => `${f.replace(/_/g, " ")} ${v}`).join(", ") +
+      (k.verdict ? ` → ${k.verdict}` : "") + ` (${clock(k.at)}` + (k.by ? `, ${k.by}` : "") + ")")));
+  const photos = box("Photo checks", asked.length || seen.length ? h("ul", { class: "rows" }, asked, seen) :
+    h("div", { class: "empty" }, "Nothing asked for yet."),
+    h("p", { class: "hint photo-hint" }, "Send the photo to your agent. It reads the picture and stores only the data points; the photo itself is never kept."));
   const note = h("input", { id: "f-note", type: "text", placeholder: "optional note", "aria-label": "Note" });
   const stepBtn = (step, label, primary) => h("button", { type: "button", class: primary ? "primary" : "", onclick: (ev) => act(ev.target, async () => {
     const res = await api("/api/log", { step, note: note.value }); note.value = ""; await route(); return res.logged; }) }, label);
@@ -370,7 +378,7 @@ function cookView(st, detail) {
         await api("/api/close", { abandon: true, notes: notes.value }); location.hash = "#history"; }); } }, "Abandon"))));
 
   const log = box("Commits", eventLog(detail.events));
-  show(head, box(null, pipe), tiles, h("div", { class: "grid two" }, h("div", {}, chart, log), h("div", {}, checks, actions, close)));
+  show(head, box(null, pipe), tiles, h("div", { class: "grid two" }, h("div", {}, chart, log), h("div", {}, checks, photos, actions, close)));
   main._chart = chart;
 }
 

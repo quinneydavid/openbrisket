@@ -75,6 +75,7 @@ class EngineTests(Base):
         for alarm in ("pit-drift", "fire-dying", "lid-open", "behind", "probe-lost", "no-data"):
             self.assertNotIn(alarm, kinds)
         self.assertTrue(any("CHECK: stall detected" in m for m in self.notifier.sent))
+        self.assertIn("bark", [a["check"] for a in engine.state["asks"]])  # it is waiting to be shown the bark
         with open(os.path.join(self.store.dir(cook_id), "curve.csv")) as f:
             rows = f.read().splitlines()
         self.assertEqual(rows[0], "at,pit," + ",".join(f"probe{n}" for n in range(1, 10)) + ",fan,pit_target")

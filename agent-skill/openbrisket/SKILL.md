@@ -35,6 +35,8 @@ ob() { curl -sS -H "Authorization: Bearer $OPENBRISKET_TOKEN" -H "Content-Type: 
 | Open a cook | `ob /api/cooks '{"recipe":"texas-brisket","weight_kg":5.4,"serve_at":"2026-11-14 18:00","probes":[1,2],"probe_labels":{"1":"flat","2":"point"}}'` |
 | Smoke test | `ob /api/smoke-test '{}'` |
 | Log a step | `ob /api/log '{"step":"meat-on"}'` (steps: `meat-on`, `wrap`, `spritz`, `rest`, `note`) |
+| Store a photo check | `ob /api/check '{"check":"bark","data":{"colour":"mahogany","set":"firm","coverage_pct":90},"verdict":"wrap","by":"<your model>"}'` |
+| Check vocabulary | `ob /api/checks` |
 | Close | `ob /api/close '{"score":8.5,"cooked_weight_kg":3.1,"notes":"flat a little dry"}'` |
 | Past cooks | `ob /api/cooks`, one cook: `ob /api/cooks/<id>` |
 
@@ -50,7 +52,31 @@ Errors come back as `{"error": "..."}` with a plain sentence; pass it on.
 - `estimate.off_at`: when the meat should come off; `estimate.rest_available_min`: minutes between that
   and serving. `estimate.data_weight` near 0 means the estimate is still mostly the recipe's timing.
 - `pipeline`: the stages with done / active / pending / failed.
+- `asks`: photos OpenBrisket is waiting to be shown (see Photos). Mention them when you report on the cook.
 - `checks`: each is pass, fail or pending with a one-line detail. Lead with any that fail.
+
+## Photos
+
+When the cook sends you a photo of the meat, the smoker or the smoke, look at it and store what you see with
+`record_check` (MCP) or `/api/check`. Only the data points are stored; never upload or forward the photo.
+`cook.asks` in the status lists the photos OpenBrisket is currently waiting for.
+
+| Check | When | What to look for | Verdict |
+|---|---|---|---|
+| `raw` | Before the cook | Fat cap thickness in mm, marbling (low/medium/high), thickness of the thickest part in cm, whether it needs trimming | `ok` or `trim` |
+| `smoke` | During the smoke test | Smoke colour: `thin-blue` or `clear` is right; `white`, `grey` or `black` means the fire is not burning cleanly | `ok` or `wait` |
+| `probe` | Right after the meat goes on | Is the probe tip in the centre of the thickest part: `ok`, `shallow`, `in-fat`, `near-bone`, `through` | `ok` or `move` |
+| `bark` | In the stall, and before wrapping | Colour (`pale` to `black`), whether it looks set (`soft`, `tacky`, `firm`), how much of the surface is covered, cracking | `wait`, `spritz`, `wrap` or `ok` |
+| `slice` | After the rest | Smoke ring depth in mm, moisture (`dry`/`ok`/`juicy`), bend, how well the fat rendered | `ok`, `under` or `over` |
+
+Rules for judging:
+
+- Give only the fields you can actually see in the photo. Leave out anything you would be guessing.
+- A bark verdict of `wrap` needs a dark colour AND a set surface. Colour alone is not enough: say so and ask the
+  cook to rub it lightly with a finger if you cannot tell from the picture.
+- If the photo is too dark, blurred or shows the wrong thing, ask for another one. Do not store a guess.
+- After storing, tell the cook the verdict in one sentence and why.
+- You cannot judge tenderness from a photo. That is always the probe and the hand.
 
 ## How to behave
 

@@ -94,6 +94,46 @@ class ServiceTests(Base):
         with self.assertRaises(ServiceError):
             self.service.cook("../etc")
 
+    def test_photo_checks_are_stored_as_data(self):
+        with self.assertRaises(ServiceError):
+            self.service.record_check("bark", {"colour": "mahogany"})          # no cook open
+        started = self.service.start("texas-brisket", 5.4, self.serve_at)
+        for kind, data, verdict, wrong in (
+                ("crust", {"colour": "dark"}, None, "unknown check"),
+                ("bark", {}, None, "needs data"),
+                ("bark", {"colour": "purple"}, None, "must be one of"),
+                ("bark", {"shine": "high"}, None, "not a field"),
+                ("bark", {"coverage_pct": 140}, None, "number from 0 to 100"),
+                ("bark", {"colour": "dark"}, "eat", "verdict")):
+            with self.assertRaises(ServiceError) as cm:
+                self.service.record_check(kind, data, verdict)
+            self.assertIn(wrong, str(cm.exception))
+        self.service.log_step("meat-on")
+        asks = self.service.status()["cook"]["asks"]
+        self.assertEqual([a["check"] for a in asks], ["probe"])                # asked to show the probe placement
+        self.service.record_check("probe", {"placement": "ok"}, "ok", by="test-model")
+        self.assertEqual(self.service.status()["cook"]["asks"], [])
+        out = self.service.record_check("bark", {"colour": "mahogany", "set": "firm", "coverage_pct": 90}, "wrap",
+                                        note="edges darker than the middle")
+        self.assertEqual(out["logged"], "bark check: colour mahogany, set firm, coverage pct 90 -> wrap "
+                                        "(edges darker than the middle)")
+        cook = self.service.status()["cook"]
+        self.assertEqual(cook["photo_checks"]["bark"]["verdict"], "wrap")
+        events = self.service.cook(started["cook"])["events"]
+        bark = next(e for e in events if e["event"] == "check-bark")
+        self.assertEqual(bark["data"], {"check": "bark", "colour": "mahogany", "set": "firm", "coverage_pct": 90.0,
+                                        "verdict": "wrap"})
+        self.assertIn("bark", self.service.check_vocabulary())
+
+    def test_smoke_photo_completes_the_smoke_test(self):
+        self.service.start("texas-brisket", 5.4, self.serve_at)
+        before = {c["name"]: c["result"] for c in self.service.smoke_test()["checks"]}
+        self.assertEqual(before["clean-smoke"], "skip")
+        self.service.record_check("smoke", {"colour": "white"}, "wait")
+        self.assertEqual({c["name"]: c["result"] for c in self.service.smoke_test()["checks"]}["clean-smoke"], "fail")
+        self.service.record_check("smoke", {"colour": "thin-blue"}, "ok")
+        self.assertEqual({c["name"]: c["result"] for c in self.service.smoke_test()["checks"]}["clean-smoke"], "pass")
+
     def test_probe_selection(self):
         p = self.service._probes
         self.assertEqual((p(None), p(2), p("1, 3,3"), p([4, "2", 4])), ([1], [2], [1, 3], [4, 2]))
@@ -155,7 +195,7 @@ class McpTests(Base):
                          mcp.PROTOCOL_VERSIONS[0])
         self.assertIsNone(mcp.handle(self.service, {"jsonrpc": "2.0", "method": "notifications/initialized"}))
         names = [t["name"] for t in self.call("tools/list")["result"]["tools"]]
-        self.assertEqual(len(names), 8)
+        self.assertEqual(len(names), 9)
         for t in self.call("tools/list")["result"]["tools"]:
             self.assertEqual(t["inputSchema"]["type"], "object")
         self.assertEqual(self.call("nope")["error"]["code"], -32601)
@@ -179,6 +219,12 @@ class McpTests(Base):
         self.assertFalse(self.tool("log_step", {"step": "meat-on"})[0])
         err, text = self.tool("cook_status")
         self.assertIn("since meat on", json.loads(text)["summary"])
+        err, text = self.tool("record_check", {"check": "bark", "data": {"colour": "plaid"}})
+        self.assertTrue(err)
+        self.assertIn("must be one of: pale, tan, mahogany, dark, black", text)
+        err, text = self.tool("record_check", {"check": "bark", "data": {"colour": "dark", "set": "tacky"},
+                                               "verdict": "wait", "by": "qwen"})
+        self.assertFalse(err)
         self.assertFalse(self.tool("close_cook", {"score": 8})[0])
         err, text = self.tool("cook_history")
         cook_id = json.loads(text)[0]["id"]

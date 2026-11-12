@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Photo checks as data: raw meat, probe placement, smoke, bark and slice, each in a fixed vocabulary. An agent
+  looks at the photo and stores the record through the new `record_check` MCP tool or `/api/check`; the photo is
+  never stored. The page lists what the cook is waiting to be shown and what it has been shown.
+- A smoke check in the last 30 minutes now decides the `clean-smoke` item of the smoke test.
+- Notes say what to photograph, and still say what to look for by eye.
+
 ## 0.3.0
 
 - Several probes in the meat: tick them when opening a cook and name them (flat, point). The coldest one decides
