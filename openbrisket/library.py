@@ -241,6 +241,47 @@ def save_recipe(root: str, form: dict, rub_dirs: list[str]) -> dict:
             "message": "added" if old is None else f"updated to {doc['version']}"}
 
 
+def save_yaml(root: str, kind: str, text: str, rub_dirs: list[str], change: str = "") -> dict:
+    """Save a recipe or rub from YAML text. The text is written as typed, so comments survive; only the version
+    line is touched, and only when the content changed without the version being moved on."""
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise LibraryError(f"not valid YAML: {e}") from None
+    if not isinstance(doc, dict):
+        raise LibraryError("the YAML must be a mapping with apiVersion, kind, name ...")
+    want = "Rub" if kind == "rub" else "Recipe"
+    if doc.get("kind") != want:
+        raise LibraryError(f"kind must be {want}")
+    name = slug(doc.get("name") or "")
+    if not name or name != doc.get("name"):
+        raise LibraryError("name must be lower-case words joined by dashes, e.g. " + (name or "beef-short-ribs"))
+    ensure(root)
+    path = os.path.join(root, "rubs" if kind == "rub" else "", name + ".yaml")
+    old = _existing(path)
+    body = lambda d: {k: v for k, v in d.items() if k != "version"}  # noqa: E731
+    version = str(doc.get("version", "1.0.0"))
+    if old is not None:
+        old_version = str(old.get("version", "1.0.0"))
+        if body(old) == body(doc) and old_version == version:
+            return {"id": name, "version": version, "saved": False, "message": "no change"}
+        if body(old) != body(doc) and old_version == version:
+            new_version = bump(version)             # a changed file never keeps its old version number
+            pattern = re.compile(r"^(version:\s*)(['\"]?)" + re.escape(version) + r"\2\s*$", re.M)
+            if pattern.search(text):
+                text = pattern.sub(lambda m: f"{m.group(1)}{new_version}", text, count=1)
+            else:                                   # no version line to move on: add one after the name
+                text = re.sub(r"^(name:.*)$", lambda m: f"{m.group(1)}\nversion: {new_version}", text, count=1, flags=re.M)
+            doc["version"], version = new_version, new_version
+    problems = recipes.validate_rub(doc) if kind == "rub" else recipes.validate_recipe(doc, root, rub_dirs)
+    if problems:
+        raise LibraryError("; ".join(problems))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text if text.endswith("\n") else text + "\n")
+    _commit(root, f"{kind} {name} {version}: " + (change.strip() or ("add" if old is None else "update")))
+    return {"id": name, "version": version, "saved": True, "message": "added" if old is None else f"updated to {version}"}
+
+
 def delete(root: str, kind: str, item_id: str) -> None:
     name = slug(item_id)
     path = os.path.join(root, "rubs" if kind == "rub" else "", name + ".yaml")

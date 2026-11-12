@@ -564,6 +564,22 @@ function recipeForm(r, rubs, styles) {
   return el;
 }
 
+// The file itself: for people who would rather edit the YAML than fill in the form.
+function yamlForm(kind, item) {
+  const area = h("textarea", { id: "y-text", rows: String(Math.min(40, Math.max(14, item.source.split("\n").length + 2))), spellcheck: "false", "aria-label": "YAML" }, item.source);
+  return box(`Edit YAML: ${kind === "rub" ? "rubs/" : ""}${item.id}.yaml`, h("div", { class: "body" },
+    item.own ? null : msg(`This is a built-in ${kind}. Saving makes your own copy, which is then used in its place.`),
+    area,
+    h("p", { class: "hint" }, "Saved exactly as typed, comments included. It is checked first, so a mistake is refused with the reason. If you change the content and leave the version line alone, the version is moved on for you."),
+    h("div", { class: "fields block-label" }, field("y-change", "What changed and why", "", { wide: true, placeholder: "becomes the commit message" })),
+    h("div", { class: "actions" },
+      h("button", { type: "button", class: "primary", onclick: (ev) => act(ev.target, async () => {
+        const out = await api("/api/yaml", { kind, yaml: area.value, change: fv("y-change") });
+        if (out.warnings && out.warnings.length) { alert("Saved, with a warning:\n\n" + out.warnings.join("\n")); }
+        location.hash = "#recipes"; await route(); }) }, "Save YAML"),
+      h("button", { type: "button", onclick: () => { location.hash = "#recipes"; } }, "Cancel"))));
+}
+
 function historyButton(kind, id, holder) {
   return h("button", { type: "button", onclick: (ev) => act(ev.target, async () => {
     const entries = await api(`/api/history/${kind}/${encodeURIComponent(id)}`);
@@ -585,6 +601,14 @@ async function renderRecipes(arg) {
   const [recipes, rubs, styles] = await Promise.all([api("/api/recipes"), api("/api/rubs"), api("/api/styles")]);
   if (arg === "new-recipe") return show(recipeForm(null, rubs, styles));
   if (arg === "new-rub") return show(rubForm(null));
+  if (arg && arg.startsWith("yaml-recipe:")) {
+    const r = recipes.find((x) => x.id === arg.slice(12));
+    return show(r && r.valid ? yamlForm("recipe", r) : msg("No such recipe.", "err"));
+  }
+  if (arg && arg.startsWith("yaml-rub:")) {
+    const r = rubs.find((x) => x.id === arg.slice(9));
+    return show(r && r.valid ? yamlForm("rub", r) : msg("No such rub.", "err"));
+  }
   if (arg && arg.startsWith("edit-recipe:")) {
     const r = recipes.find((x) => x.id === arg.slice(12));
     return show(r && r.valid ? recipeForm(r, rubs, styles) : msg("No such recipe.", "err"));
@@ -619,6 +643,7 @@ async function renderRecipes(arg) {
               h("td", { class: "links" }, v.cooks.map((c, i) => [i ? ", " : "", h("a", { href: "#history/" + encodeURIComponent(c.id) }, (c.opened_at || "").slice(0, 10) + (c.score !== null && c.score !== undefined ? ` (${c.score})` : ""))]))))))) :
             h("p", { class: "hint" }, "No finished cooks on this recipe yet. Results will be listed here by recipe version."),
           h("div", { class: "actions" }, h("a", { class: "btn", href: "#recipes/edit-recipe:" + encodeURIComponent(r.id) }, r.own ? "Edit" : "Customise"),
+            h("a", { class: "btn", href: "#recipes/yaml-recipe:" + encodeURIComponent(r.id) }, "Edit YAML"),
             historyButton("recipe", r.id, hist), r.own ? removeButton("recipe", r.id) : null), hist),
         h("details", {}, h("summary", {}, r.id + ".yaml"), h("pre", {}, r.source))); }),
     h("h1", { class: "section" }, "Rubs"),
@@ -630,6 +655,7 @@ async function renderRecipes(arg) {
               h("td", {}, Math.round(i.parts / r.ingredients.reduce((a, b) => a + b.parts, 0) * 100) + "%")))))),
           h("p", { class: "hint" }, r.used_by.length ? "Used by: " + r.used_by.join(", ") : "Not used by any recipe yet."),
           h("div", { class: "actions" }, h("a", { class: "btn", href: "#recipes/edit-rub:" + encodeURIComponent(r.id) }, r.own ? "Edit" : "Customise"),
+            h("a", { class: "btn", href: "#recipes/yaml-rub:" + encodeURIComponent(r.id) }, "Edit YAML"),
             historyButton("rub", r.id, hist), r.own && !r.used_by.length ? removeButton("rub", r.id) : null), hist),
         h("details", {}, h("summary", {}, "rubs/" + r.id + ".yaml"), h("pre", {}, r.source))); }));
 }
@@ -733,8 +759,8 @@ async function renderApi() {
       } catch (err) { out.replaceChildren(msg(String(err), "err")); }
       send.disabled = false;
     } }, "Send");
-    return h("details", { class: "api" }, h("summary", {}, h("span", { class: "verb " + e.method.toLowerCase() }, e.method), h("code", {}, e.path), h("span", { class: "muted" }, e.op.summary),
-      e.op.security ? null : h("span", { class: "badge" }, "no token")),
+    return h("details", { class: "api" }, h("summary", {}, h("span", { class: "verb " + e.method.toLowerCase() }, e.method), h("code", {}, e.path), h("span", { class: "muted" }, e.op.summary.replace(/ Needs (read|write|admin) rights\.$/, "")),
+      h("span", { class: "badge" }, e.op["x-required-scope"] || "no token")),
       h("div", { class: "body" }, params.length ? h("div", { class: "fields" }, params.map((p) => h("div", {}, h("label", {}, p.dataset.name), p))) : null,
         input ? [h("label", { class: params.length ? "block-label" : "" }, "Body"), input] : null,
         e.method !== "GET" && e.path !== "/api/plan" && e.path !== "/mcp" ? h("p", { class: "hint" }, "This acts on your real data.") : null,
@@ -780,10 +806,27 @@ async function renderSettings() {
       f("s-bot", "Bot token", "", { type: "password", placeholder: v.telegram.bot_token_set ? "saved; leave empty to keep" : "not set" }), f("s-chat", "Chat id", v.telegram.chat_id)),
       h("div", { class: "actions" }, h("button", { class: "primary", type: "button", onclick: save }, "Save"),
         h("button", { type: "button", onclick: (ev) => act(ev.target, async () => { const r = await api("/api/settings/test-notify", {}); if (!r.ok) throw new Error(r.error); return "Test note sent."; }) }, "Send a test note")))),
-    box("Agents", h("div", { class: "body" }, h("p", { class: "sub" }, "An agent can follow and run a cook through the MCP endpoint or the JSON API, with this token."),
+    box("Tokens", h("div", { class: "body" },
+      h("p", { class: "sub" }, "Give each agent or screen its own token with only the rights it needs. Read can look and plan. Write can also run a cook and save recipes. Admin can also change these settings, delete, and mint tokens."),
+      v.tokens.length ? h("div", { class: "scroll" }, h("table", { class: "tokens" }, h("thead", {}, h("tr", {}, h("th", {}, "Name"), h("th", {}, "Rights"), h("th", {}, "Made"), h("th", {}, ""))),
+        h("tbody", {}, v.tokens.map((t) => h("tr", {}, h("td", {}, t.name), h("td", {}, t.scope), h("td", {}, (t.created_at || "").slice(0, 10)),
+          h("td", {}, h("button", { type: "button", class: "danger mini", onclick: (ev) => { if (confirm(`Revoke the token "${t.name}"? Whatever uses it stops working at once.`)) act(ev.target, async () => {
+            await api("/api/tokens/revoke", { id: t.id }); await renderSettings(); }); } }, "Revoke"))))))) :
+        h("p", { class: "hint" }, "No tokens minted yet. The main access token below has admin rights."),
+      h("div", { class: "fields block-label" }, field("t-name", "Name", "", { placeholder: "zoidberg, kitchen display ..." }),
+        field("t-scope", "Rights", "read", { options: [["read", "read: look and plan"], ["write", "write: also run cooks, save recipes"], ["admin", "admin: everything"]] })),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "primary", onclick: async (ev) => {
+        const holder = ev.target.closest(".box");
+        holder.querySelectorAll(".msg").forEach((m) => m.remove());
+        try {
+          const out = await api("/api/tokens", { name: fv("t-name"), scope: fv("t-scope") });
+          holder.querySelector(".body").append(h("div", { class: "msg ok", role: "status" }, h("div", {}, `Token "${out.name}" with ${out.scope} rights. Copy it now: it is not stored and cannot be shown again.`), h("pre", {}, out.token)));
+        } catch (e) { holder.querySelector(".body").append(msg(e.message, "err")); }
+      } }, "Mint token")))),
+    box("Agents", h("div", { class: "body" }, h("p", { class: "sub" }, "An agent can follow and run a cook through the MCP endpoint or the JSON API, with a token from above or the main access token."),
       h("dl", { class: "kv" }, h("dt", {}, "MCP endpoint"), h("dd", { class: "mono" }, location.origin + "/mcp"),
         h("dt", {}, "API"), h("dd", { class: "mono" }, location.origin + "/api/status"),
-        h("dt", {}, "Access token"), h("dd", {}, h("details", {}, h("summary", {}, "Show"), h("span", { class: "mono" }, v.access_token))),
+        h("dt", {}, "Main access token (admin)"), h("dd", {}, h("details", {}, h("summary", {}, "Show"), h("span", { class: "mono" }, v.access_token))),
         h("dt", {}, "Cook log"), h("dd", { class: "mono" }, v.cooks_path)),
       h("div", { class: "actions" }, h("button", { type: "button", onclick: () => { try { localStorage.removeItem("openbrisket.token"); } catch (e) { /* ignore */ } token = null; route(); } }, "Forget the token in this browser")))));
 }

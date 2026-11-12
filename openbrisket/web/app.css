@@ -212,6 +212,10 @@ h1.section { margin-top: 32px; }
 .ing { display: grid; grid-template-columns: minmax(0, 1fr) 96px 104px auto; gap: 8px; }
 @media (max-width: 560px) { .ing { grid-template-columns: 1fr 1fr; } }
 table.ingredients { max-width: 520px; }
+table.tokens { max-width: 640px; }
+table.tokens td:last-child { width: 1%; }
+.msg pre { margin-top: 8px; background: var(--bg); border: 1px solid var(--border); user-select: all; }
+#y-text { min-height: 320px; }
 .results { margin-top: 12px; }
 .results td.links { text-align: left; white-space: normal; }
 .results th:last-child { text-align: left; }

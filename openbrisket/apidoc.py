@@ -47,7 +47,30 @@ ENDPOINTS = [
     ("GET", "/api/openapi.json", "Agents", "This API as an OpenAPI 3 document. No token needed.", None),
     ("GET", "/healthz", "Agents", "Liveness check. No token needed.", None),
 ]
+ENDPOINTS += [
+    ("POST", "/api/yaml", "Recipes", "Save a recipe or rub from its YAML text, kept exactly as typed.",
+     {"kind": "rub", "yaml": "apiVersion: openbrisket/v1\nkind: Rub\nname: plain\ningredients:\n  - {name: salt, parts: 1, kind: salt}\n",
+      "change": "why it changed"}),
+    ("GET", "/api/tokens", "Settings", "Minted tokens: name, rights and date. Never their values.", None),
+    ("POST", "/api/tokens", "Settings", "Mint a token with read, write or admin rights. The value is shown once.",
+     {"name": "kitchen display", "scope": "read"}),
+    ("POST", "/api/tokens/revoke", "Settings", "Revoke a minted token by its id.", {"id": "1a2b3c4d"}),
+]
 PUBLIC = {"/healthz", "/api/openapi.json"}
+ADMIN = {"/api/settings", "/api/settings/test-source", "/api/settings/test-notify", "/api/delete", "/api/tokens",
+         "/api/tokens/revoke"}
+READ_POSTS = {"/api/plan", "/mcp"}       # POSTs that change nothing (/mcp checks each tool itself)
+
+
+def required_scope(method: str, path: str) -> str | None:
+    """The rights a request needs: None (public), read, write or admin."""
+    if path in PUBLIC:
+        return None
+    if path in ADMIN:
+        return "admin"
+    if method == "GET" or path in READ_POSTS:
+        return "read"
+    return "write"
 
 
 def spec() -> dict:
@@ -56,9 +79,13 @@ def spec() -> dict:
         op: dict = {"summary": summary, "tags": [group],
                     "responses": {"200": {"description": "OK", "content": {"application/json": {}}},
                                   "400": {"description": "Refused, with {\"error\": \"why\"}"}}}
-        if path not in PUBLIC:
+        scope = required_scope(method, path)
+        if scope:
             op["security"] = [{"token": []}]
+            op["x-required-scope"] = scope
+            op["summary"] = f"{summary} Needs {scope} rights."
             op["responses"]["401"] = {"description": "Access token missing or wrong"}
+            op["responses"]["403"] = {"description": f"The token does not carry {scope} rights"}
         params = [seg[1:-1] for seg in path.split("/") if seg.startswith("{")]
         if params:
             op["parameters"] = [{"name": p, "in": "path", "required": True, "schema": {"type": "string"}} for p in params]
@@ -72,6 +99,8 @@ def spec() -> dict:
                  "description": "BBQ as Code. Follow a barbecue cook, keep recipes and rubs as files with history. "
                                 "Temperatures are in degrees Celsius."},
         "components": {"securitySchemes": {"token": {"type": "http", "scheme": "bearer",
-                                                     "description": "The access token from the Settings page"}}},
+                                                     "description": "The access token from the Settings page (admin), "
+                                                                    "or a token minted there with read, write or "
+                                                                    "admin rights"}}},
         "paths": paths,
     }

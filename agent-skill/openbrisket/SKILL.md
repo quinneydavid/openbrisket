@@ -15,7 +15,9 @@ record what they tell you they did.
 Two settings, both from the OpenBrisket Settings page ("Agents"):
 
 - `OPENBRISKET_URL`, e.g. `http://openbrisket.local:8321`
-- `OPENBRISKET_TOKEN`, the access token
+- `OPENBRISKET_TOKEN`, a token minted on the Settings page. `write` rights are right for an assistant that
+  runs cooks; `read` is enough for one that only reports. With a read token the write tools are not offered,
+  and a write call answers 403: tell the cook the token cannot do that rather than retrying.
 
 If your agent supports MCP, connect to `$OPENBRISKET_URL/mcp` (streamable HTTP) with the header
 `Authorization: Bearer $OPENBRISKET_TOKEN` and use the tools there; they mirror the calls below.

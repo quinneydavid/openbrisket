@@ -103,7 +103,7 @@ using the terminal alone.
   save is a YAML file in your own library (`recipes/` in the data folder, a git repository), with a commit for
   every change. The built-in ones are read-only; "Customise" makes your copy.
 - **History**: a year of cooks at a glance, and each past cook with its curve, events and score.
-- **API**: every endpoint with a Send button. The same list is served as an OpenAPI 3 document at
+- **API**: every endpoint with a Send button and the rights it needs. The same list is served as an OpenAPI 3 document at
   `/api/openapi.json`.
 - **Settings**: readings (including a name for each probe, so you know which physical probe is which),
   Telegram, and the address and token for agents.
@@ -111,7 +111,9 @@ using the terminal alone.
 The header has a light / dark / auto switch. The colours are GitHub's open-source Primer palette;
 OpenBrisket is not affiliated with GitHub.
 
-Everything under `/api` and `/mcp` needs the access token. Put the page behind HTTPS (a reverse proxy)
+Everything under `/api` and `/mcp` needs a token. The main access token has full rights. On the Settings
+page you can mint more with fewer: `read` (look and plan), `write` (also run a cook and save recipes) or
+`admin`. Give each agent or screen its own, and revoke it when it is no longer needed. Put the page behind HTTPS (a reverse proxy)
 before reaching it from outside your home network.
 
 ## Agents

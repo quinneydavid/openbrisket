@@ -5,14 +5,13 @@ itself is a static shell with no data in it; it asks for the token once and keep
 """
 from __future__ import annotations
 
-import hmac
 import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__, apidoc, mcp
-from .service import Service, ServiceError
+from .service import SCOPES, Service, ServiceError
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 MAX_BODY = 256 * 1024
@@ -46,11 +45,30 @@ def make_handler(service: Service):
         def _json(self, obj, code: int = 200) -> None:
             self._send(code, json.dumps(obj).encode(), "application/json")
 
-        def _authed(self) -> bool:
+        def _scope(self) -> str | None:
+            """The rights of the token on this request, or None."""
             header = self.headers.get("Authorization", "")
             if not header.startswith("Bearer "):
-                return False
-            return hmac.compare_digest(header[7:].strip().encode(), service.access_token().encode())
+                return None
+            return service.scope_of(header[7:].strip())
+
+        def _allowed(self, method: str, path: str) -> str | None:
+            """Check the request's token against what the route needs. Sends the refusal itself and returns
+            None; returns the token's scope when the request may go ahead."""
+            scope = self._scope()
+            if scope is None:
+                self._json({"error": "access token required"}, 401)
+                return None
+            lookup = path
+            if path.startswith("/api/cooks/"):
+                lookup = "/api/cooks/{id}"
+            elif path.startswith("/api/history/"):
+                lookup = "/api/history/{kind}/{id}"
+            need = apidoc.required_scope(method, lookup) or "read"
+            if SCOPES.index(scope) < SCOPES.index(need):
+                self._json({"error": f"this token has {scope} rights; this needs {need}"}, 403)
+                return None
+            return scope
 
         def _body(self) -> dict:
             length = int(self.headers.get("Content-Length") or 0)
@@ -81,9 +99,12 @@ def make_handler(service: Service):
                         "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'"})
             if not path.startswith("/api/"):
                 return self._json({"error": "not found"}, 404)
-            if not self._authed():
-                return self._json({"error": "access token required"}, 401)
+            scope = self._allowed("GET", path)
+            if scope is None:
+                return None
             try:
+                if path == "/api/tokens":
+                    return self._json(service.list_tokens())
                 if path == "/api/status":
                     return self._json(service.status())
                 if path == "/api/recipes":
@@ -104,6 +125,7 @@ def make_handler(service: Service):
                 if path == "/api/settings":
                     view = service.settings_view()
                     view["access_token"] = service.access_token()
+                    view["tokens"] = service.list_tokens()
                     return self._json(view)
                 return self._json({"error": "not found"}, 404)
             except ServiceError as e:
@@ -113,12 +135,13 @@ def make_handler(service: Service):
             path = self.path.split("?", 1)[0]
             if path != "/mcp" and not path.startswith("/api/"):
                 return self._json({"error": "not found"}, 404)
-            if not self._authed():
-                return self._json({"error": "access token required"}, 401,)
+            scope = self._allowed("POST", path)
+            if scope is None:
+                return None
             try:
                 body = self._body()
                 if path == "/mcp":
-                    reply = mcp.handle(service, body)
+                    reply = mcp.handle(service, body, scope)
                     if reply is None:
                         return self._send(202, b"", "application/json")
                     return self._json(reply)
@@ -126,6 +149,12 @@ def make_handler(service: Service):
                     return self._json(service.save_recipe(body))
                 if path == "/api/rubs":
                     return self._json(service.save_rub(body))
+                if path == "/api/yaml":
+                    return self._json(service.save_yaml(body.get("kind", ""), body.get("yaml", ""), body.get("change", "")))
+                if path == "/api/tokens":
+                    return self._json(service.mint_token(body.get("name", ""), body.get("scope", "")))
+                if path == "/api/tokens/revoke":
+                    return self._json(service.revoke_token(body.get("id", "")))
                 if path == "/api/delete":
                     return self._json(service.delete_item(body.get("kind", ""), body.get("id", "")))
                 if path == "/api/plan":

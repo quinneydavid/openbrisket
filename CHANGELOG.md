@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0
+
+- Edit YAML: a button beside Edit / Customise on every recipe and rub opens the file itself. It is saved exactly
+  as typed, comments included, after the same checks as the form. Also `POST /api/yaml`.
+- Tokens with limited rights. Mint a token on the Settings page with read, write or admin rights:
+  read can look and plan; write can also run a cook and save recipes; admin can also change settings, delete,
+  and mint tokens. Rights are enforced on every API route and on each MCP tool (a read token only sees the
+  looking tools). A token's value is shown once and only its hash is stored. Tokens can be revoked.
+- The API tab and the OpenAPI document show the rights each endpoint needs.
+
 ## 0.8.1
 
 - The tagline is written "BBQ as Code".

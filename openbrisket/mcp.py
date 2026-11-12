@@ -155,6 +155,14 @@ TOOLS = [
 ]
 
 
+READ_TOOLS = {"cook_status", "list_recipes", "list_rubs", "plan_cook", "cook_history", "recipe_history"}
+
+
+def tools_for(scope: str) -> list[dict]:
+    """The tools a token may see: the looking ones with read rights, all of them with write or admin."""
+    return [t for t in TOOLS if scope != "read" or t["name"] in READ_TOOLS]
+
+
 def _call(service: Service, name: str, a: dict):
     if name == "cook_status":
         s = service.status()
@@ -197,7 +205,7 @@ def _error(msg_id, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
 
 
-def handle(service: Service, msg: dict) -> dict | None:
+def handle(service: Service, msg: dict, scope: str = "admin") -> dict | None:
     """Answer one JSON-RPC message. Returns None for notifications (the HTTP layer replies 202)."""
     method, msg_id = msg.get("method"), msg.get("id")
     if msg.get("jsonrpc") != "2.0" or not isinstance(method, str):
@@ -215,11 +223,15 @@ def handle(service: Service, msg: dict) -> dict | None:
     if method == "ping":
         return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": TOOLS}}
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": tools_for(scope)}}
     if method == "tools/call":
         name, args = params.get("name"), params.get("arguments") or {}
         if name not in {t["name"] for t in TOOLS}:
             return _error(msg_id, -32602, f"unknown tool: {name}")
+        if name not in {t["name"] for t in tools_for(scope)}:
+            return {"jsonrpc": "2.0", "id": msg_id, "result": {"content": [{"type": "text", "text": (
+                f"this token has {scope} rights and may not use {name}; it needs a token with write rights")}],
+                "isError": True}}
         try:
             result = _call(service, name, args)
             text, is_error = json.dumps(result, indent=1, default=str), False

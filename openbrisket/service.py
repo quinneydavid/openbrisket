@@ -3,6 +3,8 @@ all call this, so they cannot disagree about how a cook works."""
 from __future__ import annotations
 
 import csv
+import hashlib
+import hmac
 import os
 import secrets
 import threading
@@ -16,6 +18,12 @@ from .cook import Engine
 from .store import MAX_PROBES, Store
 
 STEPS = ("meat-on", "wrap", "spritz", "rest", "note")
+
+# What a token may do. Each level includes the ones before it.
+#   read   look: status, recipes, rubs, history, cooks, plans
+#   write  run a cook and change recipes: open, log steps, probes, photo checks, smoke test, close, save
+#   admin  everything: settings (which hold secrets), deleting, and tokens themselves
+SCOPES = ("read", "write", "admin")
 
 
 class ServiceError(Exception):
@@ -73,6 +81,54 @@ class Service:
                 token = secrets.token_urlsafe(24)
                 settings.update({"access": {"token": token}})
             return token
+
+    # --- tokens with limited rights ---------------------------------------------------------------
+    @staticmethod
+    def _hash(token: str) -> str:
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    def scope_of(self, token: str) -> str | None:
+        """The rights a presented token carries: admin for the main access token, the minted scope for a minted
+        token, None for anything else."""
+        if not token:
+            return None
+        if hmac.compare_digest(token.encode(), self.access_token().encode()):
+            return "admin"
+        digest = self._hash(token)
+        for t in (self.cfg().get("access") or {}).get("tokens") or []:
+            if hmac.compare_digest(str(t.get("hash", "")), digest):
+                return t.get("scope") if t.get("scope") in SCOPES else None
+        return None
+
+    def list_tokens(self) -> list[dict]:
+        """Minted tokens, without their values (only a hash is kept, so a value can never be shown again)."""
+        return [{"id": t["id"], "name": t.get("name", ""), "scope": t.get("scope"), "created_at": t.get("created_at")}
+                for t in (self.cfg().get("access") or {}).get("tokens") or []]
+
+    def mint_token(self, name: str, scope: str) -> dict:
+        name = str(name or "").strip()[:60]
+        if not name:
+            raise ServiceError("give the token a name, so you know later what it was for")
+        if scope not in SCOPES:
+            raise ServiceError(f"scope is one of: {', '.join(SCOPES)}")
+        with self.lock:
+            tokens = list((self.cfg().get("access") or {}).get("tokens") or [])
+            if any(t.get("name") == name for t in tokens):
+                raise ServiceError(f"there is already a token called '{name}'; revoke it first or pick another name")
+            value = "ob_" + secrets.token_urlsafe(30)
+            entry = {"id": secrets.token_hex(4), "name": name, "scope": scope, "hash": self._hash(value),
+                     "created_at": _now().isoformat(timespec="seconds")}
+            settings.update({"access": {"tokens": tokens + [entry]}})
+            return {"id": entry["id"], "name": name, "scope": scope, "token": value}
+
+    def revoke_token(self, token_id: str) -> dict:
+        with self.lock:
+            tokens = list((self.cfg().get("access") or {}).get("tokens") or [])
+            keep = [t for t in tokens if t.get("id") != token_id]
+            if len(keep) == len(tokens):
+                raise ServiceError("no token with that id")
+            settings.update({"access": {"tokens": keep}})
+            return {"revoked": token_id}
 
     def settings_view(self) -> dict:
         """Settings for the web page. Secrets are never sent back, only whether they are set."""
@@ -307,6 +363,20 @@ class Service:
                 raise ServiceError(str(e)) from None
             saved = next((r for r in self.list_recipes() if r["id"] == out["id"]), None)
             out["warnings"] = (saved or {}).get("warnings", [])
+            return out
+
+    def save_yaml(self, kind: str, text: str, change: str = "") -> dict:
+        """Save a recipe or rub from its YAML text, exactly as typed (comments and layout are kept)."""
+        if kind not in ("recipe", "rub"):
+            raise ServiceError("kind is recipe or rub")
+        with self.lock:
+            try:
+                out = library.save_yaml(self.library_root(), kind, str(text or ""), self.recipe_dirs, str(change or ""))
+            except library.LibraryError as e:
+                raise ServiceError(str(e)) from None
+            if kind == "recipe":
+                saved = next((r for r in self.list_recipes() if r["id"] == out["id"]), None)
+                out["warnings"] = (saved or {}).get("warnings", [])
             return out
 
     def delete_item(self, kind: str, item_id: str) -> dict:

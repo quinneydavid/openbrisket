@@ -196,6 +196,78 @@ class ServiceTests(Base):
         self.assertEqual(res[0]["cooks"][0]["rub_version"], "1.0.0")
         self.assertEqual({r["id"]: r for r in self.service.list_recipes()}["texas-brisket"]["results"], [])
 
+    YAML = """apiVersion: openbrisket/v1
+kind: Recipe
+name: lamb-shoulder
+version: 1.0.0
+cut: lamb-shoulder
+# keep the pit steady: lamb fat scorches
+pit:
+  target_c: 125   # was 135 on the first try
+meat:
+  target_c: 93
+timing:
+  hours_per_kg: 3
+"""
+
+    def test_yaml_is_saved_as_typed(self):
+        out = self.service.save_yaml("recipe", self.YAML)
+        self.assertEqual((out["id"], out["version"], out["message"]), ("lamb-shoulder", "1.0.0", "added"))
+        path = os.path.join(self.library, "lamb-shoulder.yaml")
+        with open(path) as f:
+            self.assertEqual(f.read(), self.YAML)                          # comments and layout untouched
+        self.assertEqual(self.service.save_yaml("recipe", self.YAML)["message"], "no change")
+        changed = self.YAML.replace("target_c: 125   # was 135 on the first try", "target_c: 120   # lower again")
+        out = self.service.save_yaml("recipe", changed, "lower pit")
+        self.assertEqual(out["version"], "1.0.1")                           # the version line is moved on for you
+        with open(path) as f:
+            text = f.read()
+        self.assertIn("version: 1.0.1", text)
+        self.assertIn("# keep the pit steady: lamb fat scorches", text)
+        self.assertIn("target_c: 120   # lower again", text)
+        hist = self.service.item_history("recipe", "lamb-shoulder")
+        self.assertEqual(hist[0]["message"], "recipe lamb-shoulder 1.0.1: lower pit")
+        self.assertEqual(hist[0]["changes"], [{"field": "Pit temperature", "before": "125", "after": "120"}])
+        for bad, wrong in ((self.YAML.replace("target_c: 93", "target_c: 40"), "food-safety floor"),
+                           ("name: [unclosed", "not valid YAML"),
+                           (self.YAML.replace("kind: Recipe", "kind: Rub"), "kind must be Recipe"),
+                           (self.YAML.replace("name: lamb-shoulder", "name: Lamb Shoulder"), "lower-case words"),
+                           ("- just\n- a list\n", "must be a mapping")):
+            with self.assertRaises(ServiceError) as cm:
+                self.service.save_yaml("recipe", bad)
+            self.assertIn(wrong, str(cm.exception))
+        rub = "apiVersion: openbrisket/v1\nkind: Rub\nname: plain\ningredients:\n  - {name: salt, parts: 1, kind: salt}\n"
+        self.assertEqual(self.service.save_yaml("rub", rub)["version"], "1.0.0")
+        out = self.service.save_yaml("rub", rub.replace("parts: 1", "parts: 2"))
+        self.assertEqual(out["version"], "1.0.1")                           # a version line is added when there was none
+        with open(os.path.join(self.library, "rubs", "plain.yaml")) as f:
+            self.assertIn("name: plain\nversion: 1.0.1\n", f.read())
+
+    def test_tokens_carry_rights_and_are_stored_only_as_a_hash(self):
+        admin = self.service.access_token()
+        read = self.service.mint_token("kitchen display", "read")
+        write = self.service.mint_token("zoidberg", "write")
+        self.assertTrue(read["token"].startswith("ob_"))
+        self.assertEqual((self.service.scope_of(admin), self.service.scope_of(read["token"]),
+                          self.service.scope_of(write["token"]), self.service.scope_of("nope"), self.service.scope_of("")),
+                         ("admin", "read", "write", None, None))
+        with open(settings.path()) as f:
+            stored = f.read()
+        self.assertNotIn(read["token"], stored)
+        self.assertNotIn(write["token"], stored)
+        self.assertEqual([(t["name"], t["scope"]) for t in self.service.list_tokens()],
+                         [("kitchen display", "read"), ("zoidberg", "write")])
+        self.assertNotIn("hash", self.service.list_tokens()[0])
+        for name, scope, wrong in (("", "read", "name"), ("x", "root", "scope is one of"), ("zoidberg", "read", "already")):
+            with self.assertRaises(ServiceError) as cm:
+                self.service.mint_token(name, scope)
+            self.assertIn(wrong, str(cm.exception))
+        self.service.revoke_token(read["id"])
+        self.assertIsNone(self.service.scope_of(read["token"]))
+        self.assertEqual(self.service.scope_of(write["token"]), "write")
+        with self.assertRaises(ServiceError):
+            self.service.revoke_token("nope")
+
     def test_bad_recipes_are_refused_with_the_reason(self):
         self.service.save_rub(self.RUB)
         for change, wrong in (({"cut": "tofu-block"}, "must start with"),
@@ -487,6 +559,53 @@ class HttpTests(Base):
         self.assertEqual(self.req("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "ping"}, token=None)[0], 401)
         self.assertEqual(self.req("/api/settings", token="wrong")[0], 401)
         self.assertEqual(self.req("/../../etc/passwd", token=None)[0], 404)
+
+    def test_rights_are_enforced_on_every_door(self):
+        read = self.service.mint_token("display", "read")["token"]
+        write = self.service.mint_token("agent", "write")["token"]
+        body = {"recipe": "pork-ribs", "serve_at": self.serve_at}
+        # read: may look and plan, may not change anything
+        self.assertEqual(self.req("/api/status", token=read)[0], 200)
+        self.assertEqual(self.req("/api/recipes", token=read)[0], 200)
+        self.assertEqual(self.req("/api/plan", body, token=read)[0], 200)
+        code, out, _ = self.req("/api/cooks", body, token=read)
+        self.assertEqual((code, out["error"]), (403, "this token has read rights; this needs write"))
+        for path in ("/api/log", "/api/yaml", "/api/recipes", "/api/close", "/api/probe", "/api/check", "/api/smoke-test"):
+            self.assertEqual(self.req(path, {}, token=read)[0], 403, path)
+        self.assertEqual(self.req("/api/settings", token=read)[0], 403)          # settings hold secrets
+        self.assertEqual(self.req("/api/tokens", token=read)[0], 403)
+        # write: may run a cook and save recipes, may not touch settings, delete or mint
+        self.assertEqual(self.req("/api/cooks", body, token=write)[0], 200)
+        self.assertEqual(self.req("/api/log", {"step": "meat-on"}, token=write)[0], 200)
+        self.assertEqual(self.req("/api/settings", token=write)[0], 403)
+        self.assertEqual(self.req("/api/settings", {"poll_seconds": 5}, token=write)[0], 403)
+        self.assertEqual(self.req("/api/delete", {"kind": "rub", "id": "x"}, token=write)[0], 403)
+        self.assertEqual(self.req("/api/tokens", {"name": "more", "scope": "admin"}, token=write)[0], 403)
+        self.assertEqual(self.req("/api/cooks/x", token=read)[0], 400)           # allowed through, then "no such cook"
+        # MCP: a read token sees and may call only the looking tools
+        def mcp_call(token, method, params=None):
+            return self.req("/mcp", {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}, token=token)[1]
+        names = [t["name"] for t in mcp_call(read, "tools/list")["result"]["tools"]]
+        self.assertEqual(sorted(names), ["cook_history", "cook_status", "list_recipes", "list_rubs", "plan_cook",
+                                         "recipe_history"])
+        self.assertEqual(len(mcp_call(write, "tools/list")["result"]["tools"]), 14)
+        refused = mcp_call(read, "tools/call", {"name": "log_step", "arguments": {"step": "wrap"}})["result"]
+        self.assertTrue(refused["isError"])
+        self.assertIn("read rights", refused["content"][0]["text"])
+        self.assertFalse(mcp_call(read, "tools/call", {"name": "cook_status"})["result"]["isError"])
+        self.assertFalse(mcp_call(write, "tools/call", {"name": "log_step", "arguments": {"step": "spritz"}})["result"]["isError"])
+        # admin: mint over HTTP, value shown once, then revoke
+        code, minted, _ = self.req("/api/tokens", {"name": "temp", "scope": "read"})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.req("/api/status", token=minted["token"])[0], 200)
+        listed = self.req("/api/tokens")[1]
+        self.assertNotIn(minted["token"], json.dumps(listed))
+        self.assertEqual(self.req("/api/tokens/revoke", {"id": minted["id"]})[0], 200)
+        self.assertEqual(self.req("/api/status", token=minted["token"])[0], 401)
+        spec = self.req("/api/openapi.json", token=None)[1]
+        self.assertEqual(spec["paths"]["/api/settings"]["get"]["x-required-scope"], "admin")
+        self.assertEqual(spec["paths"]["/api/log"]["post"]["x-required-scope"], "write")
+        self.assertEqual(spec["paths"]["/api/plan"]["post"]["x-required-scope"], "read")
 
     def test_every_route_is_in_the_api_description(self):
         import re
