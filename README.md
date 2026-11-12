@@ -1,6 +1,6 @@
 # OpenBrisket
 
-BBQ as code. Recipes and rubs are files in git, every cook is a log of commits, and you get a note whenever the
+BBQ as Code. Recipes and rubs are files in git, every cook is a log of commits, and you get a note whenever the
 meat needs you. We call the method PitOps.
 
 Smoking meat means changing things: how long it cooks, when it comes off, what goes in the rub. OpenBrisket keeps

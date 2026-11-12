@@ -19,7 +19,8 @@ MAX_BODY = 256 * 1024
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
           "/theme.js": ("theme.js", "text/javascript; charset=utf-8"),
-          "/app.css": ("app.css", "text/css; charset=utf-8")}
+          "/app.css": ("app.css", "text/css; charset=utf-8"),
+          "/favicon.svg": ("favicon.svg", "image/svg+xml")}
 
 
 def make_handler(service: Service):

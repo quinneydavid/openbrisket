@@ -69,7 +69,7 @@ def spec() -> dict:
     return {
         "openapi": "3.0.3",
         "info": {"title": "OpenBrisket", "version": __version__,
-                 "description": "BBQ as code. Follow a barbecue cook, keep recipes and rubs as files with history. "
+                 "description": "BBQ as Code. Follow a barbecue cook, keep recipes and rubs as files with history. "
                                 "Temperatures are in degrees Celsius."},
         "components": {"securitySchemes": {"token": {"type": "http", "scheme": "bearer",
                                                      "description": "The access token from the Settings page"}}},

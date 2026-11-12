@@ -478,6 +478,8 @@ class HttpTests(Base):
         self.assertEqual(self.req("/app.js", token=None)[0], 200)
         self.assertEqual(self.req("/app.css", token=None)[0], 200)
         self.assertEqual(self.req("/theme.js", token=None)[0], 200)
+        self.assertEqual(self.req("/favicon.svg", token=None)[0], 200)
+        self.assertIn(b"BBQ as Code", body)
         self.assertIn(b'data-theme="light"', body)
         self.assertEqual(self.req("/healthz", token=None)[1]["ok"], True)
         self.assertEqual(self.req("/api/status", token=None)[0], 401)

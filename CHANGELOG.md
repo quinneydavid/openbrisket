@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1
+
+- The tagline is written "BBQ as Code".
+- A browser-tab icon.
+
 ## 0.8.0
 
 - Recipes for every kind of food, not only big cuts. A recipe has a `style` (low-and-slow, ribs, poultry, roast,
