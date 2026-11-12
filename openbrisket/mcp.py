@@ -64,16 +64,33 @@ TOOLS = [
     {"name": "save_recipe",
      "description": "Add or update one of the cook's own recipes. Stored as a YAML file with a commit per save; a "
                     "changed recipe gets a new version number. Saving under the name of a built-in recipe makes the "
-                    "cook's own copy, which replaces it. Give exactly one of hours_per_kg or hours_fixed. The cut "
-                    "must start with the kind of meat (beef-, pork-, lamb-, chicken-, turkey-, duck-, fish-, "
-                    "sausage-); the meat target is checked against a food-safety floor for it. Temperatures in "
+                    "cook's own copy, which replaces it. Give exactly one of hours_per_kg, hours_fixed or stages. The cut "
+                    "must start with the kind of food (beef-, pork-, lamb-, chicken-, turkey-, duck-, fish-, "
+                    "sausage-, vegetable-, cheese-, nut-, fruit-, other-); the meat target is checked against a food-safety floor for it. Temperatures in "
                     "degrees Celsius.",
      "inputSchema": _obj({
          "name": {"type": "string"}, "version": {"type": "string", "description": "Default 1.0.0"},
          "cut": {"type": "string", "description": "e.g. beef-short-ribs"}, "description": {"type": "string"},
          "rub": {"type": "string", "description": "A rub id from list_rubs; save the rub first"},
+         "style": {"type": "string", "enum": ["low-and-slow", "ribs", "poultry", "roast", "fish", "sausage", "quick"],
+                   "description": "The kind of cook. It sets defaults: low-and-slow has a stall and a long rest and "
+                                  "is done by feel; ribs by the bend test; poultry, roast, fish and sausage by "
+                                  "temperature with no stall; quick (wings, vegetables) by the clock with no probe."},
+         "done_by": {"type": "string", "enum": ["feel", "temperature", "bend", "time"],
+                     "description": "Only to override the style"},
+         "probe": {"type": "string", "enum": ["needed", "optional", "none"], "description": "Only to override the style"},
          "pit_target_c": {"type": "number"}, "pit_tolerance_c": {"type": "number", "description": "Default 10"},
-         "meat_target_c": {"type": "number"},
+         "meat_target_c": {"type": "number", "description": "Needed for anything with a food-safety floor"},
+         "pull_c": {"type": "number", "description": "Take it off at this temperature; it carries over to the target"},
+         "stall": {"type": "boolean", "description": "Only to override the style"},
+         "stages": {"type": "array", "description": "Timed stages in place of hours, e.g. ribs 3-2-1",
+                    "items": _obj({"name": {"type": "string"}, "hours": {"type": "number"},
+                                   "note": {"type": "string"}}, ["name", "hours"])},
+         "finish": _obj({"what": {"type": "string", "enum": ["sear", "crisp", "glaze", "sauce"]},
+                         "minutes": {"type": "number"}, "pit_c": {"type": "number"},
+                         "at_c": {"type": "number", "description": "Start when the meat reaches this"},
+                         "minutes_before_end": {"type": "number", "description": "Or start this long before the end"}},
+                        ["what", "minutes"]),
          "hours_per_kg": {"type": "number", "description": "For cuts sized by weight"},
          "hours_fixed": {"type": "number", "description": "For cuts sized by time, like ribs"},
          "fridge_out_min": {"type": "number"}, "dry_brine_hours": {"type": "number"},
@@ -84,7 +101,7 @@ TOOLS = [
          "rest_min_minutes": {"type": "number"}, "rest_ideal_minutes": {"type": "number"},
          "hold_min_c": {"type": "number", "description": "Lowest meat temperature for a long hold. Default 60"},
          "change": {"type": "string", "description": "One line on what changed and why (the commit message)"}},
-         ["name", "cut", "pit_target_c", "meat_target_c"])},
+         ["name", "cut", "pit_target_c"])},
     {"name": "plan_cook",
      "description": "The full timeline for a cook, worked back from the serving time, without starting anything.",
      "inputSchema": _obj({"recipe": RECIPE, "weight_kg": WEIGHT, "serve_at": SERVE}, ["recipe", "serve_at"])},

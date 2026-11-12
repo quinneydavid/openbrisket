@@ -29,6 +29,7 @@ ENDPOINTS = [
     ("POST", "/api/recipes", "Recipes", "Add or change one of your own recipes. A changed recipe gets the next version.",
      {"name": "beef-short-ribs", "cut": "beef-short-ribs", "rub": "dalmatian", "pit_target_c": 125,
       "meat_target_c": 96, "hours_fixed": 8, "wrap_at_c": 77, "change": "why it changed"}),
+    ("GET", "/api/styles", "Recipes", "The kinds of cook a recipe can be (low-and-slow, ribs, poultry, roast, fish, sausage, quick) and the defaults each sets.", None),
     ("GET", "/api/rubs", "Recipes", "Every rub with ingredients, salt and sugar share, and the recipes using it.", None),
     ("POST", "/api/rubs", "Recipes", "Add or change one of your own rubs.",
      {"name": "coffee-chilli", "ingredients": [{"name": "ground coffee", "parts": 2},

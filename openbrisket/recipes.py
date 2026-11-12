@@ -20,6 +20,26 @@ MIN_SAFE_C = {
 }
 GROUND_MIN_SAFE_C = 71
 PIT_RANGE_C = (80, 200)
+FINISH_PIT_MAX_C = 350     # a sear at the end may run far hotter than the smoke
+
+# What kind of cook a recipe is. The style only sets defaults: any of them can be overridden in the recipe.
+#   stall    is there a stall to watch for
+#   done_by  feel = probe tender (temperature is a guide) | temperature | bend (ribs) | time
+#   probe    needed | optional | none
+#   rest     default minimum and ideal rest, minutes
+STYLES = {
+    "low-and-slow": {"stall": True,  "done_by": "feel",        "probe": "needed",   "rest": (30, 60)},
+    "ribs":         {"stall": False, "done_by": "bend",        "probe": "optional", "rest": (10, 20)},
+    "poultry":      {"stall": False, "done_by": "temperature", "probe": "needed",   "rest": (10, 15)},
+    "roast":        {"stall": False, "done_by": "temperature", "probe": "needed",   "rest": (10, 20)},
+    "fish":         {"stall": False, "done_by": "temperature", "probe": "optional", "rest": (0, 0)},
+    "sausage":      {"stall": False, "done_by": "temperature", "probe": "optional", "rest": (0, 5)},
+    "quick":        {"stall": False, "done_by": "time",        "probe": "none",     "rest": (0, 0)},
+}
+DONE_BY = ("feel", "temperature", "bend", "time")
+PROBE = ("needed", "optional", "none")
+FINISHES = ("sear", "crisp", "glaze", "sauce")
+NO_FLOOR = {"vegetable", "cheese", "nut", "fruit", "other"}      # cuts with no meat-safety floor
 HOLD_FLOOR_C = 57          # hot-holding limit; recipes default to 60 for a margin
 
 
@@ -34,7 +54,7 @@ class Recipe:
     cut: str
     pit_target_c: float
     pit_tolerance_c: float
-    meat_target_c: float
+    meat_target_c: float | None
     hours_per_kg: float | None
     hours_fixed: float | None
     fridge_out_min: int
@@ -46,12 +66,31 @@ class Recipe:
     rest_min_minutes: int
     rest_ideal_minutes: int
     hold_min_c: float = 60.0      # below this the meat should not be held; the hold is watched against it
+    style: str = "low-and-slow"
+    done_by: str = "feel"
+    probe: str = "needed"
+    stall_enabled: bool = True
+    pull_c: float | None = None   # take it off at this temperature; it carries over to the target while resting
+    stages: list = field(default_factory=list)     # timed stages: [{name, hours, note}]
+    finish: dict | None = None    # a last step: {what, pit_c, minutes, at_c | minutes_before_end}
     rub: str | None = None
     description: str = ""
     path: str = ""
     raw: dict = field(default_factory=dict)
 
+    @property
+    def timed(self) -> bool:
+        """True when the clock decides the end, not a temperature."""
+        return self.done_by in ("time", "bend")
+
+    @property
+    def off_c(self) -> float | None:
+        """The meat temperature at which it comes off: the pull temperature if there is one, else the target."""
+        return self.pull_c if self.pull_c is not None else self.meat_target_c
+
     def cook_hours(self, weight_kg: float | None) -> float:
+        if self.stages:
+            return float(sum(float(s["hours"]) for s in self.stages))
         if self.hours_fixed is not None:
             return float(self.hours_fixed)
         if weight_kg is None:
@@ -97,6 +136,10 @@ def warnings(doc: dict, rub_doc: dict | None) -> list[str]:
     """Things worth knowing that do not make a recipe invalid."""
     out: list[str] = []
     pit = (doc.get("pit") or {}).get("target_c")
+    food = str(doc.get("cut", "")).split("-")[0]
+    if food in ("chicken", "turkey", "duck", "poultry") and isinstance(pit, (int, float)) and pit < 135 \
+            and not doc.get("finish"):
+        out.append(f"poultry at a pit of {pit:g} C gives rubbery skin: run 135 C or hotter, or add a crisp finish")
     if rub_doc and isinstance(pit, (int, float)):
         fr = rub_fractions(rub_doc)
         if fr["sugar"] >= SUGARY and pit > SUGAR_SCORCH_C:
@@ -122,22 +165,50 @@ def validate_recipe(doc: dict, base_dir: str | None = None, rub_dirs: list[str] 
         if not isinstance(doc.get(key), str) or not doc.get(key):
             p.append(f"{key} is missing")
 
+    style = doc.get("style", "low-and-slow")
+    if style not in STYLES:
+        p.append(f"style must be one of: {', '.join(STYLES)}")
+        style = "low-and-slow"
+    done_by = doc.get("done_by", STYLES[style]["done_by"])
+    if done_by not in DONE_BY:
+        p.append(f"done_by must be one of: {', '.join(DONE_BY)}")
+        done_by = STYLES[style]["done_by"]
+    probe = doc.get("probe", STYLES[style]["probe"])
+    if probe not in PROBE:
+        p.append(f"probe must be one of: {', '.join(PROBE)}")
+        probe = STYLES[style]["probe"]
+    if probe == "none" and done_by in ("feel", "temperature"):
+        p.append(f"done_by {done_by} needs a probe: set probe to needed or optional, or done_by to time")
+
     pit = doc.get("pit") or {}
     meat = doc.get("meat") or {}
     timing = doc.get("timing") or {}
-    stall = doc.get("stall") or {}
+    stall_raw = doc.get("stall")
+    stall = stall_raw if isinstance(stall_raw, dict) else {}
+    if stall_raw is not None and not isinstance(stall_raw, dict) and stall_raw not in ("none", False):
+        p.append("stall is either from_c and to_c, or none")
     wrap = doc.get("wrap")
-    rest = doc.get("rest") or {}
+    rest_raw = doc.get("rest")
+    rest = rest_raw if isinstance(rest_raw, dict) else {}
+    if rest_raw is not None and not isinstance(rest_raw, dict) and rest_raw not in ("none", False):
+        p.append("rest is either minutes (min_minutes, ideal_minutes), or none")
 
     pit_t = _num(pit, "target_c", p, "pit")
     _num(pit, "tolerance_c", p, "pit", required=False)
     if pit_t is not None and not PIT_RANGE_C[0] <= pit_t <= PIT_RANGE_C[1]:
         p.append(f"pit.target_c {pit_t} is outside {PIT_RANGE_C[0]}-{PIT_RANGE_C[1]} C")
 
-    meat_t = _num(meat, "target_c", p, "meat")
     floor = min_safe_c(doc.get("cut", ""))
-    if isinstance(doc.get("cut"), str) and doc.get("cut") and floor is None:
-        p.append(f"cut '{doc['cut']}' must start with one of: {', '.join(sorted(MIN_SAFE_C))}")
+    kind_of_food = str(doc.get("cut", "")).lower().split("-")[0]
+    # a temperature target is needed whenever the meat has a safety floor, even if the clock ends the cook:
+    # it is then the check to make with a thermometer before serving
+    target_needed = done_by in ("feel", "temperature") or floor is not None
+    meat_t = _num(meat, "target_c", p, "meat", required=target_needed)
+    if isinstance(doc.get("cut"), str) and doc.get("cut") and floor is None and kind_of_food not in NO_FLOOR:
+        p.append(f"cut '{doc['cut']}' must start with one of: {', '.join(sorted([*MIN_SAFE_C, *NO_FLOOR]))}")
+    pull = _num(meat, "pull_c", p, "meat", required=False)
+    if pull is not None and meat_t is not None and not meat_t - 10 <= pull <= meat_t:
+        p.append("meat.pull_c must be at most 10 C below meat.target_c, and not above it")
     if meat_t is not None and floor is not None and meat_t < floor:
         p.append(f"meat.target_c {meat_t} is below the food-safety floor of {floor} C for {doc.get('cut')}")
     if meat_t is not None and pit_t is not None and meat_t >= pit_t:
@@ -145,8 +216,20 @@ def validate_recipe(doc: dict, base_dir: str | None = None, rub_dirs: list[str] 
 
     per_kg = _num(timing, "hours_per_kg", p, "timing", required=False)
     fixed = _num(timing, "hours_fixed", p, "timing", required=False)
-    if (per_kg is None) == (fixed is None):
-        p.append("timing needs exactly one of hours_per_kg or hours_fixed")
+    stages = doc.get("stages")
+    if stages is not None:
+        if not isinstance(stages, list) or not stages:
+            p.append("stages must be a list of {name, hours}")
+            stages = None
+        else:
+            for i, st in enumerate(stages):
+                if not isinstance(st, dict) or not isinstance(st.get("name"), str) or not st.get("name"):
+                    p.append(f"stages[{i}] needs a name")
+                h = st.get("hours") if isinstance(st, dict) else None
+                if isinstance(h, bool) or not isinstance(h, (int, float)) or not 0 < h <= 24:
+                    p.append(f"stages[{i}].hours must be a number of hours")
+    if sum(x is not None for x in (per_kg, fixed, stages)) != 1:
+        p.append("timing needs exactly one of hours_per_kg, hours_fixed, or a list of stages")
     for v, name in ((per_kg, "hours_per_kg"), (fixed, "hours_fixed")):
         if v is not None and not 0 < v <= 48:
             p.append(f"timing.{name} {v} is not a sane number of hours")
@@ -174,6 +257,24 @@ def validate_recipe(doc: dict, base_dir: str | None = None, rub_dirs: list[str] 
     if hold is not None and not HOLD_FLOOR_C <= hold <= 90:
         p.append(f"rest.hold_min_c {hold} must be between {HOLD_FLOOR_C} and 90 C (food is not safe to hold below "
                  f"{HOLD_FLOOR_C} C)")
+
+    finish = doc.get("finish")
+    if finish is not None:
+        if not isinstance(finish, dict) or finish.get("what") not in FINISHES:
+            p.append(f"finish.what must be one of: {', '.join(FINISHES)}")
+        else:
+            fp = _num(finish, "pit_c", p, "finish", required=False)
+            if fp is not None and not PIT_RANGE_C[0] <= fp <= FINISH_PIT_MAX_C:
+                p.append(f"finish.pit_c {fp} is outside {PIT_RANGE_C[0]}-{FINISH_PIT_MAX_C} C")
+            fm = _num(finish, "minutes", p, "finish")
+            if fm is not None and not 0 < fm <= 120:
+                p.append("finish.minutes must be between 1 and 120")
+            at = _num(finish, "at_c", p, "finish", required=False)
+            before = _num(finish, "minutes_before_end", p, "finish", required=False)
+            if (at is None) == (before is None):
+                p.append("finish needs exactly one of at_c (a meat temperature) or minutes_before_end")
+            if at is not None and probe == "none":
+                p.append("finish.at_c needs a probe; use minutes_before_end")
 
     rub = doc.get("rub")
     if rub is not None:
@@ -237,19 +338,34 @@ def _read(path: str) -> dict:
 
 def from_doc(doc: dict, path: str = "") -> Recipe:
     """Build a Recipe from an already validated document."""
-    pit, meat, timing = doc["pit"], doc["meat"], doc["timing"]
-    stall, wrap, rest = doc.get("stall") or {}, doc.get("wrap") or {}, doc.get("rest") or {}
+    pit, meat, timing = doc["pit"], doc.get("meat") or {}, doc.get("timing") or {}
+    style = doc.get("style", "low-and-slow")
+    base = STYLES[style]
+    stall_raw, rest_raw = doc.get("stall"), doc.get("rest")
+    stall = stall_raw if isinstance(stall_raw, dict) else {}
+    rest = rest_raw if isinstance(rest_raw, dict) else {}
+    wrap = doc.get("wrap") or {}
+    stall_enabled = bool(stall) if stall_raw is not None else base["stall"]
+    no_rest = rest_raw in ("none", False)
+    rest_min, rest_ideal = (0, 0) if no_rest else base["rest"]
     return Recipe(
         name=doc["name"], version=str(doc["version"]), cut=doc["cut"],
         pit_target_c=float(pit["target_c"]), pit_tolerance_c=float(pit.get("tolerance_c", 10)),
-        meat_target_c=float(meat["target_c"]),
+        meat_target_c=float(meat["target_c"]) if meat.get("target_c") is not None else None,
+        style=style, done_by=doc.get("done_by", base["done_by"]), probe=doc.get("probe", base["probe"]),
+        stall_enabled=stall_enabled,
+        pull_c=float(meat["pull_c"]) if meat.get("pull_c") is not None else None,
+        stages=[{"name": s["name"], "hours": float(s["hours"]), "note": s.get("note", "")}
+                for s in (doc.get("stages") or [])],
+        finish=dict(doc["finish"]) if doc.get("finish") else None,
         hours_per_kg=timing.get("hours_per_kg"), hours_fixed=timing.get("hours_fixed"),
         fridge_out_min=int(timing.get("fridge_out_min", 60)),
         dry_brine_hours=float(timing.get("dry_brine_hours", 0)),
         stall_from_c=float(stall.get("from_c", 65)), stall_to_c=float(stall.get("to_c", 77)),
         wrap_at_c=float(wrap["at_c"]) if wrap.get("at_c") is not None else None,
         wrap_material=wrap.get("material"),
-        rest_min_minutes=int(rest.get("min_minutes", 30)), rest_ideal_minutes=int(rest.get("ideal_minutes", 60)),
+        rest_min_minutes=int(rest.get("min_minutes", rest_min)),
+        rest_ideal_minutes=int(rest.get("ideal_minutes", max(rest_ideal, int(rest.get("min_minutes", rest_min))))),
         hold_min_c=float(rest.get("hold_min_c", 60)),
         rub=doc.get("rub"), description=doc.get("description", ""), path=path, raw=doc,
     )

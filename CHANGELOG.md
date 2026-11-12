@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.0
+
+- Recipes for every kind of food, not only big cuts. A recipe has a `style` (low-and-slow, ribs, poultry, roast,
+  fish, sausage, quick) that sets what applies: whether there is a stall to watch, whether it is done by feel, by
+  temperature, by the bend test or by the clock, whether a probe is needed, and how long it rests. Each can be
+  overridden.
+- Timed stages (`stages`), for example ribs 3-2-1, with a note at each change.
+- A finish step (`finish`): sear, crisp, glaze or sauce, started by a meat temperature or timed from the end.
+- A pull temperature (`meat.pull_c`) for roasts that carry over while they rest.
+- Cooks with no probe in the food run by the clock: no probe alarms, a countdown, and a reminder to check the
+  temperature before serving where the food has a safety floor.
+- `rest: none` and `stall: none`. No false "stall detected" on a chicken.
+- Six more built-in recipes: whole chicken, chicken wings, ribs 3-2-1, tri-tip (reverse sear), hot-smoked salmon,
+  sausages. Cuts can now be vegetables, cheese or nuts, which have no meat target.
+- The recipe form is arranged by these parts, and choosing a style fills in its defaults.
+- Recipes written before this keep working unchanged: with no style they are low-and-slow.
+
 ## 0.7.1
 
 - An API tab: every endpoint with its description, an editable example body and a Send button, drawn from an

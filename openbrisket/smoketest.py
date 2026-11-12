@@ -63,7 +63,9 @@ def run(recipe: Recipe, reading: Reading, recent: list, notifier: Notifier | Non
     values = {n: reading.probe(n) for n in numbers}
     dead = [str(n) for n, v in values.items() if v is None]
     hot = [f"{n} ({v:.0f} C)" for n, v in values.items() if v is not None and v > 45]
-    if dead:
+    if not numbers:
+        checks.append(Check("probes", SKIP, "this recipe runs by the clock, with no probe in the food"))
+    elif dead:
         checks.append(Check("probes", FAIL, f"food probe {', '.join(dead)} not reading: plug it in"))
     elif hot:
         checks.append(Check("probes", FAIL, f"food probe {', '.join(hot)} is hot before the meat is on: is it "

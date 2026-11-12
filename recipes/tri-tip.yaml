@@ -1,0 +1,30 @@
+apiVersion: openbrisket/v1
+kind: Recipe
+name: tri-tip
+version: 1.0.0
+cut: beef-tri-tip
+style: roast
+description: Reverse-seared tri-tip. Smoke it gently to just short of medium-rare, then sear hard on both sides. Slice across the grain, which changes direction halfway along.
+rub: rubs/dalmatian.yaml
+
+pit:
+  target_c: 110
+  tolerance_c: 10
+
+meat:
+  target_c: 54          # medium-rare after the sear and the rest
+
+timing:
+  hours_per_kg: 1.1
+  fridge_out_min: 45
+  dry_brine_hours: 4
+
+finish:
+  what: sear
+  pit_c: 260
+  minutes: 4
+  at_c: 46
+
+rest:
+  min_minutes: 10
+  ideal_minutes: 15

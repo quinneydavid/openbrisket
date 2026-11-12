@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openbrisket"
-version = "0.7.1"
+version = "0.8.0"
 description = "BBQ as code: recipes and rubs in git, a cook log with history, and notes when the meat needs you."
 readme = "README.md"
 license = {text = "MIT"}

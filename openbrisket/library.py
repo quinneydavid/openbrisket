@@ -120,9 +120,21 @@ def recipe_doc(form: dict) -> dict:
         doc["description"] = str(form["description"]).strip()
     if form.get("rub"):
         doc["rub"] = f"rubs/{slug(form['rub'])}.yaml"
+    style = str(form.get("style") or "low-and-slow")
+    base = recipes.STYLES.get(style, recipes.STYLES["low-and-slow"])
+    if style != "low-and-slow":
+        doc["style"] = style
+    for key in ("done_by", "probe"):          # written only when they differ from what the style already says
+        if form.get(key) and form[key] != base[key]:
+            doc[key] = str(form[key])
     doc["pit"] = {"target_c": _num(form.get("pit_target_c"), "pit temperature"),
                   "tolerance_c": _num(form.get("pit_tolerance_c"), "pit tolerance", False) or 10}
-    doc["meat"] = {"target_c": _num(form.get("meat_target_c"), "meat target")}
+    target = _num(form.get("meat_target_c"), "meat target", False)
+    if target is not None:
+        doc["meat"] = {"target_c": target}
+        pull = _num(form.get("pull_c"), "pull temperature", False)
+        if pull is not None:
+            doc["meat"]["pull_c"] = pull
     timing: dict = {}
     per_kg, fixed = _num(form.get("hours_per_kg"), "hours per kg", False), _num(form.get("hours_fixed"), "hours", False)
     if per_kg is not None:
@@ -134,18 +146,50 @@ def recipe_doc(form: dict) -> dict:
     if brine:
         timing["dry_brine_hours"] = brine
     doc["timing"] = timing
-    doc["stall"] = {"from_c": _num(form.get("stall_from_c"), "stall start", False) or 65,
-                    "to_c": _num(form.get("stall_to_c"), "stall end", False) or 77}
+    stages = []
+    for i, st in enumerate(form.get("stages") or []):
+        if not isinstance(st, dict):
+            raise LibraryError(f"stage {i + 1} is not readable")
+        label = str(st.get("name") or "").strip()
+        if not label and st.get("hours") in (None, ""):
+            continue
+        entry = {"name": label, "hours": _num(st.get("hours"), f"hours of stage {label or i + 1}")}
+        if str(st.get("note") or "").strip():
+            entry["note"] = str(st["note"]).strip()
+        stages.append(entry)
+    if stages:
+        doc["stages"] = stages
+    wants_stall = form.get("stall") if form.get("stall") is not None else base["stall"]
+    if wants_stall in (True, "true", "yes", "on", 1):
+        doc["stall"] = {"from_c": _num(form.get("stall_from_c"), "stall start", False) or 65,
+                        "to_c": _num(form.get("stall_to_c"), "stall end", False) or 77}
+    elif base["stall"]:
+        doc["stall"] = "none"
+    fin = form.get("finish") or {}
+    if isinstance(fin, dict) and fin.get("what"):
+        f = {"what": str(fin["what"]), "minutes": _num(fin.get("minutes"), "finish minutes")}
+        for key, label in (("pit_c", "finish pit temperature"), ("at_c", "finish meat temperature"),
+                           ("minutes_before_end", "finish minutes before the end")):
+            v = _num(fin.get(key), label, False)
+            if v is not None:
+                f[key] = v
+        doc["finish"] = f
     wrap_at = _num(form.get("wrap_at_c"), "wrap temperature", False)
     if wrap_at is not None:
         doc["wrap"] = {"at_c": wrap_at}
         if str(form.get("wrap_material") or "").strip():
             doc["wrap"]["material"] = str(form["wrap_material"]).strip()
-    doc["rest"] = {"min_minutes": _num(form.get("rest_min_minutes"), "minimum rest", False) or 30,
-                   "ideal_minutes": _num(form.get("rest_ideal_minutes"), "ideal rest", False) or 60}
-    hold = _num(form.get("hold_min_c"), "hold floor", False)
-    if hold is not None and hold != 60:
-        doc["rest"]["hold_min_c"] = hold
+    rmin = _num(form.get("rest_min_minutes"), "minimum rest", False)
+    rideal = _num(form.get("rest_ideal_minutes"), "ideal rest", False)
+    rmin = base["rest"][0] if rmin is None else rmin
+    rideal = max(base["rest"][1], rmin) if rideal is None else rideal
+    if rmin == 0 and rideal == 0:
+        doc["rest"] = "none"
+    else:
+        doc["rest"] = {"min_minutes": rmin, "ideal_minutes": rideal}
+        hold = _num(form.get("hold_min_c"), "hold floor", False)
+        if hold is not None and hold != 60:
+            doc["rest"]["hold_min_c"] = hold
     return doc
 
 
@@ -213,7 +257,10 @@ def delete(root: str, kind: str, item_id: str) -> None:
 
 
 LABELS = {
-    "version": "Version", "cut": "Cut", "description": "Description", "rub": "Rub",
+    "version": "Version", "cut": "Cut", "description": "Description", "rub": "Rub", "style": "Style",
+    "done_by": "Done by", "probe": "Probe", "stall": "Stall", "rest": "Rest", "meat.pull_c": "Pull temperature",
+    "finish.what": "Finish", "finish.pit_c": "Finish pit temperature", "finish.minutes": "Finish minutes",
+    "finish.at_c": "Finish when the meat is at", "finish.minutes_before_end": "Finish, minutes before the end",
     "pit.target_c": "Pit temperature", "pit.tolerance_c": "Pit tolerance", "meat.target_c": "Meat target",
     "timing.hours_per_kg": "Hours per kg", "timing.hours_fixed": "Hours, whatever the weight",
     "timing.fridge_out_min": "Out of the fridge, minutes before", "timing.dry_brine_hours": "Dry brine, hours before",
@@ -231,7 +278,12 @@ def _flat(doc: dict | None) -> dict[str, str]:
     for key, value in doc.items():
         if key in ("apiVersion", "kind", "name"):
             continue
-        if key == "ingredients" and isinstance(value, list):
+        if key == "stages" and isinstance(value, list):
+            for n, item in enumerate(value, 1):
+                if isinstance(item, dict):
+                    out[f"ingredient:stage {n}"] = f"{item.get('name')}, {item.get('hours'):g} h" + (
+                        f" ({item['note']})" if item.get("note") else "")
+        elif key == "ingredients" and isinstance(value, list):
             for item in value:
                 if isinstance(item, dict) and item.get("name"):
                     parts = item.get("parts")

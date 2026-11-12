@@ -65,6 +65,13 @@ Errors come back as `{"error": "..."}` with a plain sentence; pass it on.
 The cook can dictate a recipe or a rub and you save it (`save_rub`, `save_recipe` over MCP). They are stored as
 YAML files with a commit per save.
 
+- Say what kind of cook it is with `style`: `low-and-slow` (brisket, shoulder), `ribs`, `poultry`, `roast`,
+  `fish`, `sausage`, or `quick` (wings, vegetables; runs by the clock with no probe). The style sets the defaults
+  for the stall, how it is judged done, whether a probe is needed and the rest; only pass `done_by`, `probe` or
+  `stall` to differ from them. Use `stages` for timed steps such as ribs 3-2-1, `finish` for a sear, crisp or
+  glaze at the end, and `pull_c` for a roast taken off a few degrees early.
+- Meat, poultry and fish always need `meat_target_c`, even when the clock ends the cook: it is the check before
+  serving. Vegetables, cheese and nuts do not.
 - Save the rub before the recipe that uses it.
 - Ingredients are in parts, as a ratio. Mark salt and sugar with `kind`, nothing else.
 - A recipe needs a name, a cut that starts with the meat (`beef-`, `pork-`, `lamb-`, `chicken-`, `turkey-`,
@@ -109,7 +116,9 @@ Rules for judging:
   probe by its sudden fall; use `set_probe` only when the cook tells you they pulled or re-inserted one.
 - Only log a step the cook says they have done. Never log `meat-on`, `wrap` or `rest` on a guess: they
   change how the cook is followed.
-- The stall (meat sitting around 65 to 77 °C for hours) is normal. Do not treat it as a problem.
+- The stall (meat sitting around 65 to 77 °C for hours) is normal for big cuts. Do not treat it as a problem.
+- `cook.style` and `cook.done_by` say what kind of cook this is. A `quick` cook has no probe: report the time
+  left, not a temperature. For `bend` and `time` the meat temperature is only a guide.
 - Tenderness is judged by hand. When the target temperature is reached, remind the cook to probe the
   meat; the temperature alone does not mean it is done.
 - A weight is needed for recipes sized by weight. Ask for it, and for the serving time, before planning.

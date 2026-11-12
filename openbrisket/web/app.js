@@ -91,7 +91,7 @@ function niceStep(range, target) {
 const cap = (t) => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
 function seriesFor(opts) {
   // Pit is always the first colour; each probe in the meat takes the next one, in order, never reshuffled.
-  const probes = (opts.probes && opts.probes.length ? opts.probes : [{ no: null, label: "Meat" }]).slice(0, 6);
+  const probes = (opts.noMeat ? [] : opts.probes && opts.probes.length ? opts.probes : [{ no: null, label: "Meat" }]).slice(0, 6);
   return [{ cls: "s0", name: "Pit", digits: 0, get: (p) => p.pit_c }].concat(probes.map((pr, i) => ({
     cls: "s" + (i + 1), name: cap(pr.label), digits: 1, meat: true,
     get: (p) => pr.no === null ? p.meat_c : (p.probes_c ? p.probes_c[pr.no] : null) ?? null })));
@@ -266,7 +266,7 @@ function startForm(recipes, reading, sources) {
   const live = reading && reading.probes_c && reading.probes_c.length ? reading.probes_c : [null, null, null];
   const picks = live.map((temp, i) => {
     const no = i + 1;
-    const box = h("input", { type: "checkbox", id: "f-probe-" + no, checked: no === 1 });
+    const box = h("input", { type: "checkbox", id: "f-probe-" + no });
     const name = h("input", { type: "text", id: "f-probe-name-" + no, placeholder: "name, e.g. flat", "aria-label": `Name for probe ${no}`, maxlength: "24" });
     const src = (sources || []).find((x) => x.no === no);
     return { no, box, name, row: h("div", { class: "row" }, h("label", { for: "f-probe-" + no, title: src ? src.entity : "" }, box, "Probe " + no,
@@ -282,11 +282,16 @@ function startForm(recipes, reading, sources) {
       probes: chosen.map((p) => p.no), probe_labels: labels };
   };
   const hint = h("p", { class: "hint" });
+  const probeHint = h("p", { class: "hint" });
   const sync = () => {
     const r = valid.find((x) => x.id === sel.value);
-    hint.textContent = r ? `${r.description} Pit ${r.pit_target_c} °C, meat to ${r.meat_target_c} °C. ` +
-      (r.hours_fixed ? `About ${r.hours_fixed} h whatever the weight.` : `About ${r.hours_per_kg} h per kg.`) : "";
-    weight.disabled = Boolean(r && r.hours_fixed);
+    hint.textContent = r ? `${r.description} Pit ${r.pit_target_c} °C` + (r.meat_target_c !== null ? `, meat to ${r.meat_target_c} °C` : "") +
+      `. ${cap(timeText(r))}. Done by ${DONE_TEXT[r.done_by]}.` : "";
+    weight.disabled = Boolean(r && !r.hours_per_kg);
+    // which probes start ticked follows the recipe: a clock-run recipe needs none
+    picks.forEach((p) => { p.box.checked = Boolean(r) && r.probe !== "none" && p.no === 1; });
+    probeHint.textContent = r && r.probe === "none" ? "This recipe runs by the clock, so no probe is needed. Tick one only if you want its temperature drawn."
+      : "Tick every probe that goes in the food. With several, the coldest one decides when it is done, so put one in the thickest part.";
   };
   sel.addEventListener("change", sync); sync();
   return box("Open a cook", h("div", { class: "body" },
@@ -296,8 +301,8 @@ function startForm(recipes, reading, sources) {
       h("div", {}, h("label", { for: "f-weight" }, "Raw weight, kg"), weight),
       h("div", {}, h("label", { for: "f-serve" }, "Serving time"), serve),
       h("div", { class: "field-wide" }, hint),
-      h("div", { class: "field-wide" }, h("label", {}, "Probes in the meat"), h("div", { class: "probe-pick" }, picks.map((p) => p.row)),
-        h("p", { class: "hint" }, "Tick every probe that goes in the meat. With several, the coldest one decides when it is done, so put one in the thickest part."))),
+      h("div", { class: "field-wide" }, h("label", {}, "Probes in the food"), h("div", { class: "probe-pick" }, picks.map((p) => p.row)),
+        probeHint)),
     h("div", { class: "actions" },
       h("button", { type: "button", onclick: (ev) => act(ev.target, async () => {
         const p = await api("/api/plan", body()); out.replaceChildren(h("pre", {}, p.text)); }) }, "Plan"),
@@ -312,7 +317,7 @@ function cookView(st, detail) {
   const t = c.targets;
   const size = c.weight_kg ? `${c.weight_kg} kg` : "sized by time";
   const head = h("div", {}, h("div", { class: "title-row" }, h("h1", {}, h("b", {}, c.recipe), " ", h("span", { class: "muted" }, `v${c.recipe_version}`)),
-    h("span", { class: "badge open" }, "Open"), h("span", { class: "badge" }, c.hold ? "resting / holding" : c.phase + (c.wrapped ? ", wrapped" : ""))),
+    h("span", { class: "badge open" }, "Open"), h("span", { class: "badge" }, c.hold ? "resting / holding" : c.phase + (c.wrapped ? ", wrapped" : "")), h("span", { class: "badge" }, c.style)),
     h("p", { class: "sub mono" }, `${c.id} · ${c.cut} · ${size}` + (c.serve_at ? ` · serving ${dayClock(c.serve_at)}` : "")));
 
   const sym = { done: "✓", active: "●", pending: "", failed: "✕", skipped: "–" };
@@ -324,9 +329,12 @@ function cookView(st, detail) {
   const tiles = h("div", { class: "tiles" },
     h("div", { class: "tile" }, h("div", { class: "k" }, c.hold ? "Pit probe (holding box)" : "Pit"), h("div", { class: "v" }, r && r.pit_c !== null ? r.pit_c.toFixed(0) : "–", h("small", {}, " °C")),
       h("div", { class: "d" }, c.hold ? "where the pit probe sits now" : `recipe ${t.pit_c} ± ${t.pit_tolerance_c}`)),
+    !c.probes.length ? h("div", { class: "tile" }, h("div", { class: "k" }, "Food"), h("div", { class: "v" }, "by the clock"),
+      h("div", { class: "d" }, "no probe in the food" + (t.meat_c !== null ? `; check it is at least ${t.meat_c} °C before serving` : ""))) :
     h("div", { class: "tile" }, h("div", { class: "k" }, c.probes.filter((p) => p.in_meat).length > 1 ? `Meat (coldest of ${c.probes.filter((p) => p.in_meat).length})` : `Meat (${(c.probes.find((p) => p.in_meat) || c.probes[0]).label})`),
       h("div", { class: "v" }, c.meat_c !== null && c.meat_c !== undefined ? c.meat_c.toFixed(1) : "–", h("small", {}, " °C")),
-      h("div", { class: "d" }, c.hold ? `holding, floor ${c.hold.floor_c} °C` : `target ${t.meat_c}`),
+      h("div", { class: "d" }, c.hold ? `holding, floor ${c.hold.floor_c} °C` : t.off_c === null ? "no target, the clock decides" :
+        (c.done_by === "temperature" || c.done_by === "feel" ? `target ${t.off_c}` : `guide ${t.off_c}`) + (t.off_c !== t.meat_c && t.meat_c !== null ? ` (carries over to ${t.meat_c})` : "")),
       c.meat_on_at || c.probes.length > 1 ? h("ul", { class: "probes" }, c.probes.slice(0, 6).map((p, i) => h("li", { class: p.in_meat ? "" : "pulled", title: p.source ? `Probe ${p.no}: ${p.source}` : `Probe ${p.no}` }, h("span", { class: "sw s" + (i + 1) }),
         h("span", {}, cap(p.label), p.source ? h("span", { class: "muted src" }, p.source) : null),
         h("span", { class: "num" }, deg(p.temp_c, 1)),
@@ -342,10 +350,10 @@ function cookView(st, detail) {
         c.hold.minutes_below_floor ? `${dur(c.hold.minutes_below_floor)} below the floor` : null].filter(Boolean).join(", "))) :
     h("div", { class: "tile" }, h("div", { class: "k" }, "Off the pit"), h("div", { class: "v" }, est && est.off_at ? clock(est.off_at) : "–"),
       h("div", { class: "d" }, est && est.off_at ? (est.rest_available_min !== undefined ? `${dur(est.rest_available_min)} before serving` : "") +
-        (est.data_weight ? `, ${Math.round(est.data_weight * 100)}% from this cook` : ", from the recipe") : "estimate after the meat is on")));
+        (c.done_by === "time" || c.done_by === "bend" ? ", by the clock" : est.data_weight ? `, ${Math.round(est.data_weight * 100)}% from this cook` : ", from the recipe") : "estimate after the meat is on")));
 
-  const proj = est && est.off_at ? { t: new Date(est.off_at).getTime(), value: t.meat_c } : null;
-  const chart = chartBox(detail.curve, { pitTarget: t.pit_c, meatTarget: t.meat_c, stall: [t.stall_from_c, t.stall_to_c], projection: proj, floor: c.hold ? c.hold.floor_c : null,
+  const proj = est && est.off_at && t.off_c !== null ? { t: new Date(est.off_at).getTime(), value: t.off_c } : null;
+  const chart = chartBox(detail.curve, { pitTarget: t.pit_c, meatTarget: c.probes.length ? t.off_c : null, stall: t.stall ? [t.stall_from_c, t.stall_to_c] : null, projection: c.probes.length && (c.done_by === "feel" || c.done_by === "temperature") ? proj : null, noMeat: !c.probes.length, floor: c.hold ? c.hold.floor_c : null,
     probes: c.probes.map((p) => ({ no: p.no, label: p.label })) });
 
   const checks = box("Checks", h("ul", { class: "rows" }, c.checks.map((k) => h("li", {}, stateCell(k.state), h("span", { class: "name" }, k.name), h("span", { class: "detail" }, k.detail)))));
@@ -371,7 +379,7 @@ function cookView(st, detail) {
       !on ? stepBtn("meat-on", "Meat on", true) : null,
       on && !resting && !c.wrapped && t.wrap_at_c !== null ? stepBtn("wrap", "Wrap") : null,
       on && !resting ? stepBtn("spritz", "Spritz") : null,
-      on && !resting ? stepBtn("rest", "Off, resting / holding", true) : null,
+      on && !resting && c.rests ? stepBtn("rest", "Off, resting / holding", true) : null,
       stepBtn("note", "Add note")),
     smokeOut));
 
@@ -461,42 +469,99 @@ function rubForm(rub) {
       h("button", { type: "button", onclick: () => { location.hash = "#recipes"; } }, "Cancel"))));
 }
 
-function recipeForm(r, rubs) {
+const timeText = (r) => r.stages && r.stages.length ? "stages: " + r.stages.map((x) => `${x.name} ${x.hours} h`).join(", ")
+  : r.hours_fixed ? `about ${r.hours_fixed} h` : `about ${r.hours_per_kg} h per kg`;
+const DONE_TEXT = { feel: "feel (probe tender)", temperature: "temperature", bend: "the bend test", time: "the clock" };
+
+function recipeForm(r, rubs, styles) {
   const fresh = !r;
-  r = r || { name: "", version: "1.0.0", cut: "", description: "", pit_target_c: 121, pit_tolerance_c: 10, meat_target_c: 95, hours_per_kg: "", hours_fixed: "",
-    fridge_out_min: 60, dry_brine_hours: "", stall_from_c: 65, stall_to_c: 77, wrap_at_c: "", wrap_material: "", rest_min_minutes: 30, rest_ideal_minutes: 60, rub: null };
+  r = r || { name: "", version: "1.0.0", cut: "", description: "", style: "low-and-slow", done_by: "feel", probe: "needed", stall: true, pit_target_c: 121, pit_tolerance_c: 10,
+    meat_target_c: 95, pull_c: "", hours_per_kg: "", hours_fixed: "", stages: [], finish: null, fridge_out_min: 60, dry_brine_hours: "", stall_from_c: 65, stall_to_c: 77,
+    wrap_at_c: "", wrap_material: "", rest_min_minutes: 30, rest_ideal_minutes: 60, rub: null };
+  const fin = r.finish || {};
   const rubOptions = [["", "no rub"]].concat(rubs.filter((x) => x.valid).map((x) => [x.id, x.name]));
-  return box(fresh ? "New recipe" : `Edit recipe: ${r.name}`, h("div", { class: "body" },
+  const group = (title, hint, ...kids) => h("fieldset", { class: "group" }, h("legend", {}, title), hint ? h("p", { class: "hint" }, hint) : null, h("div", { class: "fields" }, kids));
+
+  const stageRows = h("div", { class: "ing-rows" });
+  const addStage = (st) => {
+    st = st || { name: "", hours: "", note: "" };
+    const row = h("div", { class: "ing stage" },
+      h("input", { type: "text", class: "st-name", value: st.name || "", placeholder: "stage, e.g. wrapped", "aria-label": "Stage" }),
+      h("input", { type: "number", class: "st-hours", value: st.hours ?? "", placeholder: "hours", step: "0.25", min: "0", inputmode: "decimal", "aria-label": "Hours" }),
+      h("input", { type: "text", class: "st-note", value: st.note || "", placeholder: "what to do at the start of it", "aria-label": "Note" }),
+      h("button", { type: "button", "aria-label": "Remove stage", onclick: () => row.remove() }, "Remove"));
+    stageRows.append(row);
+  };
+  (r.stages || []).forEach(addStage);
+
+  const stallBox = h("input", { type: "checkbox", id: "c-stall", checked: Boolean(r.stall) });
+  const stallFields = h("div", { class: "fields field-wide", hidden: !r.stall },
+    field("c-stall1", "Stall from, °C", r.stall_from_c, { type: "number" }), field("c-stall2", "Stall to, °C", r.stall_to_c, { type: "number" }));
+  stallBox.addEventListener("change", () => { stallFields.hidden = !stallBox.checked; });
+
+  const el = box(fresh ? "New recipe" : `Edit recipe: ${r.name}`, h("div", { class: "body" },
     !fresh && !r.own ? msg("This is a built-in recipe. Saving makes your own copy, which is then used in its place.") : null,
-    h("div", { class: "fields" },
+    group("What it is", null,
       field("c-name", "Name", r.name, { placeholder: "beef-short-ribs" }),
-      field("c-cut", "Cut", r.cut, { placeholder: "beef-short-ribs", hint: "Starts with the meat: beef-, pork-, lamb-, chicken-, turkey-, duck-, fish-, sausage-." }),
+      field("c-cut", "Cut", r.cut, { placeholder: "beef-short-ribs", hint: "Starts with the food: beef-, pork-, lamb-, chicken-, turkey-, duck-, fish-, sausage-, vegetable-, cheese-, nut-." }),
       field("c-desc", "Description", r.description, { wide: true }),
-      field("c-rub", "Rub", r.rub ? r.rub.id : "", { options: rubOptions }),
+      field("c-rub", "Rub", r.rub ? r.rub.id : "", { options: rubOptions })),
+    group("Kind of cook", "The style sets sensible defaults for the three choices beside it and for the stall and the rest below. Change any of them afterwards.",
+      field("c-style", "Style", r.style, { options: Object.keys(styles).map((k) => [k, k]) }),
+      field("c-done", "Done by", r.done_by, { options: Object.entries(DONE_TEXT) }),
+      field("c-probe", "Probe in the food", r.probe, { options: [["needed", "needed"], ["optional", "optional"], ["none", "none (runs by the clock)"]] })),
+    group("Heat", null,
       field("c-pit", "Pit temperature, °C", r.pit_target_c, { type: "number" }),
       field("c-tol", "Pit tolerance, ± °C", r.pit_tolerance_c, { type: "number" }),
-      field("c-meat", "Meat target, °C", r.meat_target_c, { type: "number" }),
-      field("c-perkg", "Hours per kg", r.hours_per_kg, { type: "number", step: "0.1", hint: "For cuts sized by weight. Leave empty if you fill in the next one." }),
-      field("c-fixed", "Hours, whatever the weight", r.hours_fixed, { type: "number", step: "0.25", hint: "For cuts sized by time, like ribs." }),
+      field("c-meat", "Meat target, °C", r.meat_target_c, { type: "number", hint: "Needed for any meat or fish, even when the clock ends the cook: it is the check before serving." }),
+      field("c-pull", "Take off at, °C", r.pull_c, { type: "number", hint: "Optional. For roasts: a few degrees under the target, because it keeps rising while it rests." })),
+    group("Time", "Fill in exactly one of the three: hours per kg, a fixed time, or timed stages.",
+      field("c-perkg", "Hours per kg", r.hours_per_kg, { type: "number", step: "0.1" }),
+      field("c-fixed", "Hours, whatever the weight", r.hours_fixed, { type: "number", step: "0.25" }),
       field("c-fridge", "Out of the fridge, minutes before", r.fridge_out_min, { type: "number" }),
-      field("c-brine", "Dry brine, hours before", r.dry_brine_hours, { type: "number" }),
-      field("c-stall1", "Stall from, °C", r.stall_from_c, { type: "number" }),
-      field("c-stall2", "Stall to, °C", r.stall_to_c, { type: "number" }),
+      field("c-brine", "Dry brine or cure, hours before", r.dry_brine_hours, { type: "number" }),
+      h("div", { class: "field-wide" }, h("label", {}, "Timed stages (for example ribs: smoke 3, wrapped 2, glaze 1)"), stageRows,
+        h("div", { class: "actions" }, h("button", { type: "button", onclick: () => addStage() }, "Add stage")))),
+    group("Stall and wrap", null,
+      h("div", { class: "field-wide" }, h("label", { class: "check", for: "c-stall" }, stallBox, "Watch for a stall (big cuts that sit around 65 to 77 °C for hours)")),
+      stallFields,
       field("c-wrap", "Wrap at, °C", r.wrap_at_c, { type: "number", hint: "Leave empty for an unwrapped cook." }),
-      field("c-wrapm", "Wrap in", r.wrap_material, { placeholder: "butcher paper" }),
+      field("c-wrapm", "Wrap in", r.wrap_material, { placeholder: "butcher paper" })),
+    group("Finish", "An optional last step such as a sear or a glaze. Give either the meat temperature that starts it or how long before the end.",
+      field("c-fin", "Finish", fin.what || "", { options: [["", "none"], ["sear", "sear"], ["crisp", "crisp"], ["glaze", "glaze"], ["sauce", "sauce"]] }),
+      field("c-finmin", "For, minutes", fin.minutes, { type: "number" }),
+      field("c-finpit", "Pit for it, °C", fin.pit_c, { type: "number" }),
+      field("c-finat", "Start when the meat is at, °C", fin.at_c, { type: "number" }),
+      field("c-finbefore", "Or start, minutes before the end", fin.minutes_before_end, { type: "number" })),
+    group("Rest", "Set both to 0 for food that is served straight away.",
       field("c-rest1", "Rest, minimum minutes", r.rest_min_minutes, { type: "number" }),
       field("c-rest2", "Rest, ideal minutes", r.rest_ideal_minutes, { type: "number" }),
-      field("c-hold", "Hold floor, °C", r.hold_min_c ?? 60, { type: "number", hint: "During a long hold you are warned when the meat gets down to this." }),
-      fresh ? null : field("c-change", "What changed and why", "", { wide: true, placeholder: "less sugar, the bark burnt last time", hint: `Becomes the commit message. Now at version ${r.version}; a changed recipe gets the next number.` })),
+      field("c-hold", "Hold floor, °C", r.hold_min_c ?? 60, { type: "number", hint: "During a long hold you are warned when the meat gets down to this." })),
+    fresh ? null : h("div", { class: "fields" }, field("c-change", "What changed and why", "", { wide: true, placeholder: "less sugar, the bark burnt last time", hint: `Becomes the commit message. Now at version ${r.version}; a changed recipe gets the next number.` })),
     h("div", { class: "actions" },
       h("button", { type: "button", class: "primary", onclick: (ev) => act(ev.target, async () => {
+        const stages = [...stageRows.querySelectorAll(".stage")].map((x) => ({ name: x.querySelector(".st-name").value.trim(),
+          hours: x.querySelector(".st-hours").value === "" ? "" : Number(x.querySelector(".st-hours").value), note: x.querySelector(".st-note").value.trim() }));
+        const finish = fv("c-fin") ? { what: fv("c-fin"), minutes: fnum("c-finmin"), pit_c: fnum("c-finpit"), at_c: fnum("c-finat"), minutes_before_end: fnum("c-finbefore") } : null;
         const out = await api("/api/recipes", { name: fv("c-name"), version: r.version, cut: fv("c-cut"), description: fv("c-desc"), rub: fv("c-rub") || null,
-          pit_target_c: fnum("c-pit"), pit_tolerance_c: fnum("c-tol"), meat_target_c: fnum("c-meat"), hours_per_kg: fnum("c-perkg"), hours_fixed: fnum("c-fixed"),
-          fridge_out_min: fnum("c-fridge"), dry_brine_hours: fnum("c-brine"), stall_from_c: fnum("c-stall1"), stall_to_c: fnum("c-stall2"), wrap_at_c: fnum("c-wrap"),
+          style: fv("c-style"), done_by: fv("c-done"), probe: fv("c-probe"), stall: stallBox.checked,
+          pit_target_c: fnum("c-pit"), pit_tolerance_c: fnum("c-tol"), meat_target_c: fnum("c-meat"), pull_c: fnum("c-pull"), hours_per_kg: fnum("c-perkg"), hours_fixed: fnum("c-fixed"),
+          stages, finish, fridge_out_min: fnum("c-fridge"), dry_brine_hours: fnum("c-brine"), stall_from_c: fnum("c-stall1"), stall_to_c: fnum("c-stall2"), wrap_at_c: fnum("c-wrap"),
           wrap_material: fv("c-wrapm"), rest_min_minutes: fnum("c-rest1"), rest_ideal_minutes: fnum("c-rest2"), hold_min_c: fnum("c-hold"), change: fresh ? "" : fv("c-change") });
         if (out.warnings && out.warnings.length) { alert("Saved, with a warning:\n\n" + out.warnings.join("\n")); }
         location.hash = "#recipes"; await route(); }) }, "Save recipe"),
       h("button", { type: "button", onclick: () => { location.hash = "#recipes"; } }, "Cancel"))));
+  // choosing a style fills in what that style normally means
+  el.querySelector("#c-style").addEventListener("change", (ev) => {
+    const d = styles[ev.target.value];
+    if (!d) return;
+    el.querySelector("#c-done").value = d.done_by;
+    el.querySelector("#c-probe").value = d.probe;
+    stallBox.checked = d.stall; stallFields.hidden = !d.stall;
+    el.querySelector("#c-rest1").value = d.rest_min_minutes;
+    el.querySelector("#c-rest2").value = d.rest_ideal_minutes;
+  });
+  return el;
 }
 
 function historyButton(kind, id, holder) {
@@ -517,12 +582,12 @@ function removeButton(kind, id) {
     await api("/api/delete", { kind, id }); await route(); }); } }, "Delete");
 }
 async function renderRecipes(arg) {
-  const [recipes, rubs] = await Promise.all([api("/api/recipes"), api("/api/rubs")]);
-  if (arg === "new-recipe") return show(recipeForm(null, rubs));
+  const [recipes, rubs, styles] = await Promise.all([api("/api/recipes"), api("/api/rubs"), api("/api/styles")]);
+  if (arg === "new-recipe") return show(recipeForm(null, rubs, styles));
   if (arg === "new-rub") return show(rubForm(null));
   if (arg && arg.startsWith("edit-recipe:")) {
     const r = recipes.find((x) => x.id === arg.slice(12));
-    return show(r && r.valid ? recipeForm(r, rubs) : msg("No such recipe.", "err"));
+    return show(r && r.valid ? recipeForm(r, rubs, styles) : msg("No such recipe.", "err"));
   }
   if (arg && arg.startsWith("edit-rub:")) {
     const r = rubs.find((x) => x.id === arg.slice(9));
@@ -533,15 +598,19 @@ async function renderRecipes(arg) {
       h("span", { class: "push" }), h("a", { class: "btn primary", href: "#recipes/new-recipe" }, "New recipe"), h("a", { class: "btn", href: "#recipes/new-rub" }, "New rub")),
     h("p", { class: "sub" }, "Recipes and rubs are YAML files. Yours are saved here with a commit for every change."),
     recipes.map((r) => { const hist = h("div", {}); return !r.valid ? box(r.id, h("div", { class: "body" }, msg(r.error, "err"), r.own ? h("div", { class: "actions" }, removeButton("recipe", r.id)) : null)) :
-      box(h("div", { class: "title-row" }, h("h2", {}, r.name), h("span", { class: "badge" }, "v" + r.version), tag(r), h("span", { class: "muted mono" }, r.cut)),
+      box(h("div", { class: "title-row" }, h("h2", {}, r.name), h("span", { class: "badge" }, "v" + r.version), tag(r), h("span", { class: "badge" }, r.style), h("span", { class: "muted mono" }, r.cut)),
         h("div", { class: "body" }, r.description ? h("p", { class: "sub" }, r.description) : null,
           r.warnings.map((w) => msg("Warning: " + w, "err")),
           h("dl", { class: "kv" },
             h("dt", {}, "Pit"), h("dd", {}, `${r.pit_target_c} °C ± ${r.pit_tolerance_c}`),
-            h("dt", {}, "Meat"), h("dd", {}, `to ${r.meat_target_c} °C`),
-            h("dt", {}, "Time"), h("dd", {}, r.hours_fixed ? `about ${r.hours_fixed} h` : `about ${r.hours_per_kg} h per kg`),
-            h("dt", {}, "Wrap"), h("dd", {}, r.wrap_at_c ? `at ${r.wrap_at_c} °C` + (r.wrap_material ? `, ${r.wrap_material}` : "") : "not wrapped"),
-            h("dt", {}, "Rest"), h("dd", {}, `${r.rest_min_minutes} to ${r.rest_ideal_minutes} min`),
+            h("dt", {}, "Meat"), h("dd", {}, r.meat_target_c === null ? "no temperature" : `to ${r.meat_target_c} °C` + (r.pull_c !== null ? `, taken off at ${r.pull_c} °C` : "")),
+            h("dt", {}, "Done by"), h("dd", {}, DONE_TEXT[r.done_by] + (r.probe === "none" ? ", no probe in the food" : "")),
+            h("dt", {}, "Time"), h("dd", {}, timeText(r)),
+            r.stall ? [h("dt", {}, "Stall"), h("dd", {}, `watched, ${r.stall_from_c} to ${r.stall_to_c} °C`)] : null,
+            r.wrap_at_c ? [h("dt", {}, "Wrap"), h("dd", {}, `at ${r.wrap_at_c} °C` + (r.wrap_material ? `, ${r.wrap_material}` : ""))] : null,
+            r.finish ? [h("dt", {}, "Finish"), h("dd", {}, `${r.finish.what}, ${r.finish.minutes} min` + (r.finish.pit_c ? ` at ${r.finish.pit_c} °C` : "") +
+              (r.finish.at_c !== undefined && r.finish.at_c !== null ? `, once the meat is at ${r.finish.at_c} °C` : `, ${r.finish.minutes_before_end} min before the end`))] : null,
+            h("dt", {}, "Rest"), h("dd", {}, r.rest_ideal_minutes ? `${r.rest_min_minutes} to ${r.rest_ideal_minutes} min` : "none, serve straight away"),
             r.rub ? [h("dt", {}, "Rub"), h("dd", {}, `${r.rub.name} v${r.rub.version}: ` + r.rub.ingredients.map((i) => `${i.parts} ${i.name}`).join(", ") +
               ` (${Math.round(r.rub.sugar * 100)}% sugar, ${Math.round(r.rub.salt * 100)}% salt)`)] : null),
           r.results.length ? h("div", { class: "scroll results" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Version"), h("th", {}, "Cooks"), h("th", {}, "Average score"), h("th", {}, "Best"), h("th", {}, "Cooks on this version"))),

@@ -56,9 +56,11 @@ class Engine:
         self.prior = prior_params(recipe, meta.get("weight_kg"))
         # Probes in the meat (1-based). Several are allowed; the coldest reading governs every decision,
         # because the meat is only done when its slowest part is.
-        self.probe_nos = [int(n) for n in (meta.get("probes") or [meta.get("probe", 1)])]
+        # an empty list is a cook with no probe in the food at all (wings, vegetables): the clock runs it
+        chosen = meta["probes"] if "probes" in meta else [meta.get("probe", 1)]
+        self.probe_nos = [int(n) for n in chosen]
         self.probe_labels = {int(k): str(v) for k, v in (meta.get("probe_labels") or {}).items()}
-        self.probe_no = self.probe_nos[0]
+        self.probe_no = self.probe_nos[0] if self.probe_nos else 0
         self.serve_at = _dt(meta["serve_at"]) if meta.get("serve_at") else None
 
     # --- small helpers ----------------------------------------------------------------------------
@@ -242,7 +244,10 @@ class Engine:
         else:
             self._sample(now, meat_on, meat, r)
             events += self._pit_checks(now, r)
-            if meat is None:
+            events += self._clock_checks(now, meat_on)
+            if not self.probe_nos:
+                pass                                  # nothing in the food to read: the clock checks carry the cook
+            elif meat is None:
                 st.setdefault("probe_lost_since", _iso(now))
                 if now - _dt(st["probe_lost_since"]) > timedelta(minutes=2) and self._cooled("probe-lost", now, 30):
                     events.append(Event("probe-lost", "no meat probe is reading; check they are plugged in and "
@@ -334,8 +339,8 @@ class Engine:
         wrapped = bool(st.get("wrapped_at"))
         rate_now = model.recent_rate(samples)
 
-        if (not st.get("stall_at") and rec.stall_from_c <= meat < rec.stall_to_c and rate_now is not None
-                and rate_now < STALL_RATE_C_PER_H):
+        if (rec.stall_enabled and not st.get("stall_at") and rec.stall_from_c <= meat < rec.stall_to_c
+                and rate_now is not None and rate_now < STALL_RATE_C_PER_H):
             st["stall_at"] = _iso(now)
             out.append(Event("stall-start", f"stall detected at {meat:.0f} C (rising {max(rate_now, 0):.1f} C/h). "
                                             f"Bark check: send a photo of the bark, or judge it yourself: is it dark, "
@@ -351,25 +356,88 @@ class Engine:
             hours = (now - _dt(st["stall_at"])).total_seconds() / 3600
             out.append(Event("stall-end", f"through the stall after {fmt_dur(hours)}; meat at {meat:.0f} C and climbing.",
                              "info", {"stall_hours": round(hours, 2)}))
-        if meat >= rec.meat_target_c - 3 and meat < rec.meat_target_c and self._once("near-target", now):
-            out.append(Event("near-target", f"meat at {meat:.0f} C, {rec.meat_target_c - meat:.0f} C from target. "
-                                            f"Get the probe and the resting place ready.", "info"))
-        if meat >= rec.meat_target_c and self._once("target", now):
-            out.append(Event("target", f"meat has reached {meat:.0f} C. Probe it in several places: it should slide in "
-                                       f"like butter. When it does, take it off and log the rest.",
-                             "ask", {"check": "tenderness"}))
+
+        fin = rec.finish or {}
+        if fin.get("at_c") is not None and meat >= fin["at_c"] and self._once("finish", now):
+            out.append(self._finish_event(f"meat is at {meat:.0f} C"))
+        off = rec.off_c
+        if off is None:
+            return out
+        after = "take it off and log the rest" if rec.rest_ideal_minutes else "take it off, serve, and close the cook"
+        if off - 3 <= meat < off and self._once("near-target", now):
+            out.append(Event("near-target", f"meat at {meat:.0f} C, {off - meat:.0f} C to go. Get ready to take it off.",
+                             "info"))
+        if meat >= off and self._once("target", now):
+            carry = (f" It will carry over to about {rec.meat_target_c:.0f} C while it rests."
+                     if rec.pull_c is not None else "")
+            if rec.done_by == "feel":
+                msg = (f"meat has reached {meat:.0f} C. Probe it in several places: it should slide in like butter. "
+                       f"When it does, {after}.")
+                check = "tenderness"
+            elif rec.done_by == "temperature":
+                msg, check = f"meat has reached {meat:.0f} C: {after}.{carry}", "temperature"
+            else:                       # the clock or the bend test decides; the temperature is only a guide
+                msg = (f"meat has reached {meat:.0f} C, the recipe's guide temperature. "
+                       + ("Do the bend test: pick the rack up at one end, it should bend and the bark crack."
+                          if rec.done_by == "bend" else "The clock decides this cook; this is just for information."))
+                check = "guide"
+            out.append(Event("target", msg, "ask" if rec.done_by != "time" else "info", {"check": check}))
+        return out
+
+    def _finish_event(self, why: str) -> Event:
+        fin = self.recipe.finish
+        how = {"sear": "sear it", "crisp": "crisp it up", "glaze": "glaze it", "sauce": "sauce it"}[fin["what"]]
+        return Event("finish", f"{why}: time to {how}, {fin['minutes']:g} min"
+                               + (f" with the pit at {fin['pit_c']:g} C" if fin.get("pit_c") else "") + ".",
+                     "ask", {"finish": fin["what"]})
+
+    def _clock_checks(self, now: datetime, meat_on: datetime) -> list[Event]:
+        """Everything the clock decides: the change from one timed stage to the next, a finish step timed from
+        the end, and the end itself when the recipe is done by time or by the bend test."""
+        rec = self.recipe
+        out: list[Event] = []
+        elapsed_h = (now - meat_on).total_seconds() / 3600
+        try:
+            total_h = rec.cook_hours(self.meta.get("weight_kg"))
+        except Exception:
+            return out
+        at_h = 0.0
+        for i, stage in enumerate(rec.stages):
+            if i and elapsed_h >= at_h and self._once(f"stage-{i}", now):
+                out.append(Event("stage", f"stage {i + 1} of {len(rec.stages)}: {stage['name']}, {stage['hours']:g} h"
+                                          + (f". {stage['note']}" if stage.get("note") else "."), "ask",
+                                 {"stage": i + 1, "name": stage["name"]}))
+            at_h += stage["hours"]
+        fin = rec.finish or {}
+        if fin.get("minutes_before_end") is not None and elapsed_h >= total_h - fin["minutes_before_end"] / 60 \
+                and self._once("finish", now):
+            out.append(self._finish_event(f"{fin['minutes_before_end']:g} min to go"))
+        if rec.timed and elapsed_h >= total_h and self._once("time-up", now):
+            after = "take it off and log the rest" if rec.rest_ideal_minutes else "take it off, serve, and close the cook"
+            check = (" Check it with a thermometer first: it must be at least "
+                     f"{rec.meat_target_c:.0f} C." if rec.meat_target_c is not None and not self.probe_nos else "")
+            test = " Do the bend test first." if rec.done_by == "bend" else ""
+            out.append(Event("time-up", f"{fmt_dur(total_h)} are up.{test}{check} Then {after}.", "ask"))
         return out
 
     def projection(self, now: datetime):
         """(off-the-pit time, Projection, Fit) from the current data, or None before the meat is on."""
         samples = self.samples()
         meat_on = self._t("meat_on_at")
-        if not samples or meat_on is None:
+        if meat_on is None:
+            return None
+        rec = self.recipe
+        if rec.timed or rec.off_c is None:        # the clock decides: no model, the end is simply meat-on + time
+            try:
+                total = rec.cook_hours(self.meta.get("weight_kg"))
+            except Exception:
+                return None
+            return meat_on + timedelta(hours=total), model.Projection(hours=total), model.Fit(self.prior, None, None, 0.0, 0.0)
+        if not samples:
             return None
         wrapped_at = self._t("wrapped_at")
         since = (wrapped_at - meat_on).total_seconds() / 3600 if wrapped_at else None
-        proj, fit = model.remaining(samples, self.prior, self.recipe.meat_target_c, self.recipe.wrap_at_c,
-                                    bool(wrapped_at), since)
+        proj, fit = model.remaining(samples, self.prior, rec.off_c, rec.wrap_at_c, bool(wrapped_at), since)
         if proj.hours == float("inf"):
             return None, proj, fit
         last = meat_on + timedelta(hours=samples[-1].t_h)
@@ -377,7 +445,8 @@ class Engine:
 
     def _schedule_checks(self, now: datetime) -> list[Event]:
         rec = self.recipe
-        if self.serve_at is None or len(self.state["samples"]) < 45 or "target" in self.state["said"]:
+        if self.serve_at is None or self.recipe.timed or len(self.state["samples"]) < 45 \
+                or "target" in self.state["said"]:
             return []
         if not self._cooled("schedule", now, 60):
             return []
@@ -497,15 +566,23 @@ class Engine:
         stages = [
             ("smoke-test", "Smoke test", (smoke or {}).get("at") if smoke and smoke.get("passed") else None),
             ("meat-on", "Meat on", st.get("meat_on_at")),
-            ("stall", "Stall", st.get("stall_at")),
         ]
+        if rec.stall_enabled:
+            stages.append(("stall", "Stall", st.get("stall_at")))
         if rec.wrap_at_c is not None:
             stages.append(("wrap", "Wrap", st.get("wrapped_at")))
-        stages += [
-            ("stall-end", "Through the stall", said.get("stall-end")),
-            ("target", "Probe tender", said.get("target")),
-            ("rest", "Rest", st.get("rest_at")),
-        ]
+        if rec.stall_enabled:
+            stages.append(("stall-end", "Through the stall", said.get("stall-end")))
+        for i, stage in enumerate(rec.stages):
+            if i:
+                stages.append((f"stage-{i}", stage["name"].capitalize(), said.get(f"stage-{i}")))
+        if rec.finish:
+            stages.append(("finish", rec.finish["what"].capitalize(), said.get("finish")))
+        done = {"feel": ("target", "Probe tender"), "temperature": ("target", "At temperature"),
+                "bend": ("time-up", "Bend test"), "time": ("time-up", "Time up")}[rec.done_by]
+        stages.append((done[0], done[1], said.get(done[0])))
+        if rec.rest_ideal_minutes:
+            stages.append(("rest", "Rest", st.get("rest_at")))
         out, active_set = [], False
         last_done = max((i for i, s in enumerate(stages) if s[2]), default=-1)
         for i, (key, title, at) in enumerate(stages):
@@ -577,7 +654,14 @@ class Engine:
         meat = self.coldest(r)
         missing = [self.probe_name(n) for n, v in values.items() if v is None]
         note = f"; pulled: {', '.join(self.probe_name(n) for n in pulled)}" if pulled else ""
-        if meat is None:
+        if not self.probe_nos:
+            meat_on = self._t("meat_on_at")
+            total = rec.cook_hours(self.meta.get("weight_kg")) if rec.timed else None
+            if meat_on and total:
+                left = total - (now - meat_on).total_seconds() / 3600
+                add("clock", "pass" if left > 0 else "pending",
+                    f"{fmt_dur(left)} to go" if left > 0 else f"time is up ({fmt_dur(-left)} over)")
+        elif meat is None:
             add("meat-probes", "fail", "no probe is reading in the meat" + note)
         elif missing:
             add("meat-probes", "fail", f"not reading: {', '.join(missing)}" + note)
@@ -595,7 +679,7 @@ class Engine:
                 add("wrapped", "pending", f"wrap at about {rec.wrap_at_c:.0f} C")
         if self.serve_at:
             p = self.projection(now)
-            if not p or len(st["samples"]) < 20:
+            if not p or (not rec.timed and len(st["samples"]) < 20):
                 add("on-schedule", "pending", "not enough readings yet")
             elif p[0] is None:
                 add("on-schedule", "fail", "will not reach target at this pit temperature")
@@ -618,12 +702,14 @@ class Engine:
         return {
             "id": self.cook_id, "recipe": rec.name, "recipe_version": rec.version, "cut": rec.cut,
             "weight_kg": self.meta.get("weight_kg"), "serve_at": self.meta.get("serve_at"),
+            "style": rec.style, "done_by": rec.done_by, "rests": bool(rec.rest_ideal_minutes),
             "opened_at": self.meta.get("opened_at"), "phase": self.phase(), "wrapped": bool(st.get("wrapped_at")),
             "meat_on_at": st.get("meat_on_at"),
             "probes": [{"no": n, "label": self.probe_name(n), "temp_c": v, "in_meat": n not in self.probes_out()}
                        for n, v in self.probe_values(r).items()],
             "targets": {"pit_c": rec.pit_target_c, "pit_tolerance_c": rec.pit_tolerance_c,
-                        "meat_c": rec.meat_target_c, "stall_from_c": rec.stall_from_c, "stall_to_c": rec.stall_to_c,
+                        "meat_c": rec.meat_target_c, "off_c": rec.off_c, "stall": rec.stall_enabled,
+                        "stall_from_c": rec.stall_from_c, "stall_to_c": rec.stall_to_c,
                         "wrap_at_c": rec.wrap_at_c},
             "meat_c": meat, "estimate": est, "pipeline": self.pipeline(), "checks": self.live_checks(now, r),
             "asks": st.get("asks", []), "photo_checks": st.get("checks", {}),
@@ -707,7 +793,7 @@ class Engine:
                          + (" (coldest of " + ", ".join(f"{self.probe_name(n)} {v:.1f}" for n, v in
                                                         self.in_meat(r).items()) + ")"
                             if len(self.in_meat(r)) > 1 and meat is not None else "")
-                         + f" (target {rec.meat_target_c:.0f}), fan "
+                         + (f" (target {rec.off_c:.0f}), fan " if rec.off_c is not None else ", fan ")
                          + (f"{r.fan:.0f}%" if r.fan is not None else "n/a"))
         p = self.projection(now) if meat_on and not self._t("rest_at") else None
         if p:

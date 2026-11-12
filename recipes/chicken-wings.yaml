@@ -1,0 +1,25 @@
+apiVersion: openbrisket/v1
+kind: Recipe
+name: chicken-wings
+version: 1.0.0
+cut: chicken-wings
+style: quick
+description: Wings by the clock, with a hot blast at the end to crisp the skin. Too small for a probe to stay in.
+rub: rubs/sweet-pork.yaml
+
+pit:
+  target_c: 135
+  tolerance_c: 12
+
+meat:
+  target_c: 80          # checked with a thermometer at the end; wings are better well past the safe 74
+
+timing:
+  hours_fixed: 1.5
+  fridge_out_min: 15
+
+finish:
+  what: crisp
+  pit_c: 200
+  minutes: 10
+  minutes_before_end: 10

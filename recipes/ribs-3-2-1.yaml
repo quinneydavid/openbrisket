@@ -1,0 +1,23 @@
+apiVersion: openbrisket/v1
+kind: Recipe
+name: ribs-3-2-1
+version: 1.0.0
+cut: pork-ribs-spare
+style: ribs
+description: The 3-2-1 method for spare ribs. Three hours of smoke, two wrapped, one unwrapped with a glaze. Very tender; shorten the wrap for more bite.
+rub: rubs/sweet-pork.yaml
+
+pit:
+  target_c: 110
+  tolerance_c: 10
+
+meat:
+  target_c: 93          # a guide between the bones; the bend test decides
+
+stages:
+  - {name: smoke, hours: 3}
+  - {name: wrapped, hours: 2, note: wrap in foil with a splash of apple juice}
+  - {name: glaze, hours: 1, note: unwrap and brush with sauce}
+
+timing:
+  fridge_out_min: 30

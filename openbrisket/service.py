@@ -272,6 +272,8 @@ class Service:
                 "stall_from_c": r.stall_from_c, "stall_to_c": r.stall_to_c, "wrap_at_c": r.wrap_at_c,
                 "wrap_material": r.wrap_material, "rest_min_minutes": r.rest_min_minutes,
                 "rest_ideal_minutes": r.rest_ideal_minutes, "hold_min_c": r.hold_min_c, "rub": rub,
+                "style": r.style, "done_by": r.done_by, "probe": r.probe, "stall": r.stall_enabled,
+                "pull_c": r.pull_c, "stages": r.stages, "finish": r.finish,
                 "warnings": recipes.warnings(r.raw, rub_doc), "source": source,
                 "results": results.get(r.name, []),
             })
@@ -355,9 +357,15 @@ class Service:
         return e
 
     @staticmethod
-    def _probes(probes) -> list[int]:
-        """Probe numbers from 1, [1, 2], "1,2" or None (default probe 1), checked and de-duplicated."""
+    def _probes(probes, need: str = "needed") -> list[int]:
+        """Probe numbers from 1, [1, 2], "1,2" or None, checked and de-duplicated. `need` is the recipe's:
+        needed = at least one (default probe 1), optional = default probe 1 but none is allowed,
+        none = default no probe."""
+        if probes == [] and need != "needed":
+            return []
         if probes in (None, "", []):
+            if need == "none":
+                return []
             probes = [1]
         if isinstance(probes, str):
             probes = [p for p in probes.replace(" ", "").split(",") if p]
@@ -380,7 +388,7 @@ class Service:
         with self.lock:
             recipe = self._recipe(recipe_id)
             serve = when(serve_at)
-            numbers = self._probes(probes)
+            numbers = self._probes(probes, recipe.probe)
             labels = {n: str(v).strip()[:24] for n, v in ((int(k), v) for k, v in (probe_labels or {}).items())
                       if n in numbers and str(v).strip()}
             try:
@@ -449,6 +457,12 @@ class Service:
                 raise ServiceError(str(err)) from None
             message = e.record_check(str(kind), clean, verdict, str(by)[:60], str(note).strip()[:200], _now())
             return {"cook": e.cook_id, "logged": message}
+
+    def styles(self) -> dict:
+        """The kinds of cook a recipe can be, with the defaults each one sets."""
+        return {name: {"stall": d["stall"], "done_by": d["done_by"], "probe": d["probe"],
+                       "rest_min_minutes": d["rest"][0], "rest_ideal_minutes": d["rest"][1]}
+                for name, d in recipes.STYLES.items()}
 
     def check_vocabulary(self) -> dict:
         return {kind: {"title": spec["title"], "verdicts": spec["verdicts"],

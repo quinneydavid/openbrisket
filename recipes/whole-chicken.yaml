@@ -1,0 +1,20 @@
+apiVersion: openbrisket/v1
+kind: Recipe
+name: whole-chicken
+version: 1.0.0
+cut: chicken-whole
+style: poultry
+description: Whole chicken, spatchcocked, run hot enough for the skin to bite through. Probe the thickest part of the breast.
+rub: rubs/sweet-pork.yaml
+
+pit:
+  target_c: 150
+  tolerance_c: 12
+
+meat:
+  target_c: 74          # breast; thighs will be higher and are better for it
+
+timing:
+  hours_per_kg: 0.9
+  fridge_out_min: 30
+  dry_brine_hours: 12

@@ -94,6 +94,8 @@ def make_handler(service: Service):
                     return self._json(service.item_history(kind, item))
                 if path == "/api/checks":
                     return self._json(service.check_vocabulary())
+                if path == "/api/styles":
+                    return self._json(service.styles())
                 if path == "/api/cooks":
                     return self._json(service.cooks())
                 if path.startswith("/api/cooks/"):

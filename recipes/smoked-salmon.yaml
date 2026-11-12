@@ -1,0 +1,19 @@
+apiVersion: openbrisket/v1
+kind: Recipe
+name: smoked-salmon
+version: 1.0.0
+cut: fish-salmon-fillet
+style: fish
+description: Hot-smoked salmon. Cure it, rinse, and let it dry in the fridge until tacky before it goes on. Serve warm or cold.
+
+pit:
+  target_c: 95
+  tolerance_c: 8
+
+meat:
+  target_c: 60
+
+timing:
+  hours_fixed: 1.5
+  fridge_out_min: 0
+  dry_brine_hours: 8

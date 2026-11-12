@@ -143,6 +143,24 @@ the meat heats in proportion to the gap between pit and meat, and much more slow
 It starts from the recipe's timing and shifts towards your cook's own readings as they come in. It is
 a first version. It has been tested against simulated cooks, not yet against many real ones.
 
+## Recipes for different food
+
+A brisket, a rack of ribs and a tray of wings are not the same kind of cook, so a recipe says which it is:
+
+| Style | For | Stall | Done by | Probe | Rest |
+|---|---|---|---|---|---|
+| `low-and-slow` | brisket, pork shoulder, beef cheeks | watched | feel, guided by temperature | needed | long, with a hold |
+| `ribs` | spare ribs, baby backs, short ribs | no | the bend test | optional | short |
+| `poultry` | whole chicken, turkey, thighs | no | temperature | needed | short |
+| `roast` | tri-tip, prime rib, pork loin | no | temperature | needed | short |
+| `fish` | salmon, trout | no | temperature | optional | none |
+| `sausage` | fresh and smoked sausages | no | temperature | optional | none |
+| `quick` | wings, vegetables, nuts | no | the clock | none | none |
+
+The style only sets defaults. A recipe can also have timed `stages` (ribs 3-2-1), a `finish` step (a sear, a
+crisp, a glaze), and a pull temperature for meat that carries over while it rests. See the files in
+[recipes/](recipes/) for one of each. Cold smoking is not covered.
+
 ## Photo checks
 
 At certain moments OpenBrisket asks to see something: the smoke before the meat goes on, where the

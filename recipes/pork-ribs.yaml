@@ -3,6 +3,7 @@ kind: Recipe
 name: pork-ribs
 version: 1.0.0
 cut: pork-ribs-spare
+style: ribs
 description: Spare ribs, unwrapped. Sized by time, not weight; done when a rack bends and the bark cracks.
 rub: rubs/sweet-pork.yaml
 

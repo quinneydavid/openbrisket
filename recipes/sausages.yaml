@@ -1,0 +1,18 @@
+apiVersion: openbrisket/v1
+kind: Recipe
+name: sausages
+version: 1.0.0
+cut: sausage-fresh-pork
+style: sausage
+description: Fresh sausages smoked through. Keep the pit low so the casings do not split and the fat stays in.
+
+pit:
+  target_c: 110
+  tolerance_c: 10
+
+meat:
+  target_c: 71
+
+timing:
+  hours_fixed: 2
+  fridge_out_min: 0

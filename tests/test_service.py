@@ -42,7 +42,8 @@ class Base(unittest.TestCase):
 class ServiceTests(Base):
     def test_recipes_and_plan(self):
         ids = [r["id"] for r in self.service.list_recipes()]
-        self.assertEqual(ids, ["pork-ribs", "pulled-pork", "texas-brisket"])
+        self.assertEqual(ids, ["chicken-wings", "pork-ribs", "pulled-pork", "ribs-3-2-1", "sausages", "smoked-salmon",
+                               "texas-brisket", "tri-tip", "whole-chicken"])
         brisket = next(r for r in self.service.list_recipes() if r["id"] == "texas-brisket")
         self.assertEqual(brisket["rub"]["name"], "dalmatian")
         p = self.service.plan("texas-brisket", 5.4, self.serve_at)
@@ -274,6 +275,53 @@ class ServiceTests(Base):
         with self.assertRaises(ServiceError):
             self.service.set_probe(7, False)
 
+    def test_a_cook_with_no_probe_and_a_recipe_saved_with_a_style(self):
+        started = self.service.start("chicken-wings", None, self.serve_at)       # quick: no probe by default
+        self.assertEqual(self.service.store().meta(started["cook"])["probes"], [])
+        self.service.log_step("meat-on")
+        self.service.read_now()
+        cook = self.service.status()["cook"]
+        self.assertEqual((cook["style"], cook["done_by"], cook["rests"], cook["probes"]), ("quick", "time", False, []))
+        self.assertEqual(cook["pipeline"][-1]["title"], "Time up")
+        self.service.close(score=8)
+        with self.assertRaises(ServiceError):
+            self.service.start("texas-brisket", 5.4, self.serve_at, "x")
+        self.assertEqual(self.service._probes([], "needed"), [1])                # a brisket always gets a probe
+        self.assertEqual(self.service._probes([], "optional"), [])
+        self.assertEqual(self.service._probes(None, "optional"), [1])
+        out = self.service.save_recipe({
+            "name": "Pork Belly Burnt Ends", "cut": "pork-belly", "style": "ribs", "pit_target_c": 120,
+            "meat_target_c": 93, "stages": [{"name": "smoke", "hours": 3}, {"name": "sauced", "hours": 1.5,
+                                                                              "note": "cube, sauce, back on in a tray"},
+                                             {"name": "", "hours": ""}],
+            "finish": {"what": "glaze", "minutes": 10, "minutes_before_end": 10}, "rest_min_minutes": 0,
+            "rest_ideal_minutes": 0})
+        self.assertTrue(out["saved"], out)
+        with open(os.path.join(self.library, "pork-belly-burnt-ends.yaml")) as f:
+            import yaml
+            doc = yaml.safe_load(f)
+        self.assertEqual((doc["style"], doc["rest"], len(doc["stages"]), doc["finish"]["what"]), ("ribs", "none", 2, "glaze"))
+        self.assertNotIn("stall", doc)                                           # the style already says no stall
+        self.assertNotIn("done_by", doc)
+        saved = {r["id"]: r for r in self.service.list_recipes()}["pork-belly-burnt-ends"]
+        self.assertEqual((saved["style"], saved["done_by"], saved["stall"], saved["rest_ideal_minutes"]),
+                         ("ribs", "bend", False, 0))
+        self.assertEqual(self.service.plan("pork-belly-burnt-ends", None, self.serve_at)["cook_hours"], 4.5)
+        with self.assertRaises(ServiceError) as cm:
+            self.service.save_recipe({"name": "wings2", "cut": "chicken-wings", "style": "quick", "pit_target_c": 135,
+                                      "hours_fixed": 1.5})
+        self.assertIn("meat.target_c is missing", str(cm.exception))            # chicken always needs its check
+        hist = self.service.item_history("recipe", "pork-belly-burnt-ends")
+        self.service.save_recipe({
+            "name": "Pork Belly Burnt Ends", "cut": "pork-belly", "style": "ribs", "pit_target_c": 120,
+            "meat_target_c": 93, "stages": [{"name": "smoke", "hours": 2.5}, {"name": "sauced", "hours": 1.5}],
+            "rest_min_minutes": 0, "rest_ideal_minutes": 0})
+        changes = {c["field"]: (c["before"], c["after"]) for c in self.service.item_history(
+            "recipe", "pork-belly-burnt-ends")[0]["changes"]}
+        self.assertEqual(changes["stage 1"], ("smoke, 3 h", "smoke, 2.5 h"))
+        self.assertEqual(changes["Finish"], ("glaze", None))
+        self.assertEqual(len(hist), 1)
+
     def test_probe_selection(self):
         p = self.service._probes
         self.assertEqual((p(None), p(2), p("1, 3,3"), p([4, "2", 4])), ([1], [2], [1, 3], [4, 2]))
@@ -457,7 +505,8 @@ class HttpTests(Base):
 
     def test_api_and_mcp_over_http(self):
         self.assertIsNone(self.req("/api/status")[1]["cook"])
-        self.assertEqual(len(self.req("/api/recipes")[1]), 3)
+        self.assertEqual(len(self.req("/api/recipes")[1]), 9)
+        self.assertEqual(self.req("/api/styles")[1]["quick"]["probe"], "none")
         self.assertEqual(len(self.req("/api/rubs")[1]), 2)
         code, body, _ = self.req("/api/rubs", {"name": "plain", "ingredients": [{"name": "salt", "parts": 1}]})
         self.assertEqual((code, body["id"]), (200, "plain"))
