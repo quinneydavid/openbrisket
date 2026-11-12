@@ -49,6 +49,15 @@ class StoreTests(Base):
         self.assertNotIn("state.json", tracked)
         self.assertIn(f"{cook_id}/events.yaml", tracked)
 
+    def test_a_cook_opened_by_an_older_version_keeps_its_columns(self):
+        cook_id, _ = self.open()
+        path = os.path.join(self.store.dir(cook_id), "curve.csv")
+        with open(path, "w") as f:
+            f.write("at,pit,probe1,fan\n")
+        self.store.append_curve(cook_id, {"at": "t1", "pit": 120, "probe1": 30, "fan": 40, "ambient": 28, "est_off_min": 9})
+        with open(path) as f:
+            self.assertEqual(f.read().splitlines(), ["at,pit,probe1,fan", "t1,120,30,40"])
+
     def test_second_cook_same_day_gets_a_suffix(self):
         a, _ = self.open()
         self.store.close_cook(a, START, "abandoned", {})
@@ -78,7 +87,18 @@ class EngineTests(Base):
         self.assertIn("bark", [a["check"] for a in engine.state["asks"]])  # it is waiting to be shown the bark
         with open(os.path.join(self.store.dir(cook_id), "curve.csv")) as f:
             rows = f.read().splitlines()
-        self.assertEqual(rows[0], "at,pit," + ",".join(f"probe{n}" for n in range(1, 10)) + ",fan,pit_target")
+        self.assertEqual(rows[0], "at,pit," + ",".join(f"probe{n}" for n in range(1, 10))
+                         + ",fan,pit_target,ambient,humidity,est_off_min")
+        mid = dict(zip(rows[0].split(","), rows[300].split(",")))
+        self.assertTrue(0 < float(mid["est_off_min"]) < 15 * 60)      # the estimate is logged with every row
+        a = engine.analysis(START + timedelta(hours=15))
+        self.assertAlmostEqual(a["hours_to_target"], 14.6, delta=0.3)
+        self.assertEqual(a["planned_hours"], round(2.7 * 5.4, 2))
+        self.assertGreater(a["stall"]["hours"], 1)
+        self.assertAlmostEqual(a["pit"]["mean_c"], 121, delta=0.5)
+        self.assertAlmostEqual(a["model"]["k_ratio"], 1.0, delta=0.05)  # this cook ran exactly as the recipe assumes
+        self.assertLess(abs(a["estimate"]["at_50pct"]["error_h"]), 0.5)
+        self.assertEqual(sorted(k for k in a["estimate"] if k.startswith("at_")), ["at_25pct", "at_50pct", "at_75pct"])
         self.assertGreater(len(rows), 600)        # one a minute over a 14 h cook
 
     def test_state_survives_a_restart(self):
@@ -117,6 +137,24 @@ class EngineTests(Base):
         self.assertIn("fire-dying", kinds)
         self.assertNotIn("lid-open", kinds)
         self.assertLessEqual(kinds.count("pit-drift"), 4)      # cooldown, not a flood
+
+    def test_a_fast_cook_is_seen_in_the_analysis(self):
+        cook_id, engine = self.open()
+        engine.manual("meat-on", "", START)
+        last = None
+        for r in cook_readings(scaled(engine.prior, 1.3), step_s=60):
+            r.ambient, r.humidity = 29.0, 80.0
+            for e in engine.tick(r):
+                if e.kind == "wrap-point":
+                    engine.manual("wrap", "", r.at)
+            last = r
+        a = engine.analysis(last.at)
+        self.assertAlmostEqual(a["model"]["k_ratio"], 1.3, delta=0.1)   # the meat heated 30% faster than the recipe says
+        self.assertLess(a["hours_to_target"], a["planned_hours"] - 2)
+        self.assertIsNotNone(a["wrapped_at_h"])
+        with open(os.path.join(self.store.dir(cook_id), "curve.csv")) as f:
+            header, row = f.readline().strip().split(","), f.readline().strip().split(",")
+        self.assertEqual((row[header.index("ambient")], row[header.index("humidity")]), ("29.0", "80.0"))
 
     def test_slow_cook_fails_the_schedule_check(self):
         cook_id, engine = self.open(serve_in_h=16.5)             # plan needs about 14.6 h + rest

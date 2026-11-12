@@ -90,6 +90,8 @@ class ServiceTests(Base):
         self.assertEqual(cooks[0]["id"], started["cook"])
         self.assertEqual(cooks[0]["status"], "done")
         detail = self.service.cook(started["cook"])
+        self.assertEqual(detail["meta"]["analysis"]["events"], {})
+        self.assertIn("meat_on_at", detail["meta"]["analysis"])
         self.assertNotIn("recipe", detail["meta"])
         self.assertIn("post oak, two chunks", json.dumps(detail["events"]))
         with self.assertRaises(ServiceError):

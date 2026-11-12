@@ -3,7 +3,7 @@
 services:
   openbrisket:
     build: .
-    image: openbrisket:0.5.0
+    image: openbrisket:0.5.1
     restart: unless-stopped
     ports:
       - "8321:8321"

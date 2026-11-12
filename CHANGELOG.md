@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1
+
+- More is logged with every cook: outdoor temperature and humidity (two optional sensors in Settings) and the
+  finish estimate at every minute.
+- When a cook closes, an analysis is written into its record: time on the pit against the recipe, stall start and
+  length, when it was wrapped, how steady the pit was, how fast the meat really heated compared with the recipe,
+  and how far out the estimate was a quarter, half and three quarters of the way through. Shown on the cook's page.
+
 ## 0.5.0
 
 - Write your own recipes and rubs on the Recipes tab: forms for the numbers and the ingredients, saved as YAML

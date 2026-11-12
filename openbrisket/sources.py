@@ -19,6 +19,8 @@ class Reading:
     fan_on: bool | None = None
     pit_target: float | None = None     # what the controller is set to hold
     connected: bool = True
+    ambient: float | None = None        # outdoor temperature, deg C (optional)
+    humidity: float | None = None       # outdoor relative humidity, % (optional)
 
     def probe(self, number: int) -> float | None:
         """Food probe by its 1-based number."""
@@ -76,7 +78,15 @@ class HomeAssistantSource(Source):
             fan_on={"on": True, "off": False}.get(fan_on),
             pit_target=_float(self._state(e.get("pit_target"))),
             connected=connected == "on",
+            ambient=self._optional(e.get("ambient")), humidity=self._optional(e.get("humidity")),
         )
+
+    def _optional(self, entity_id: str | None) -> float | None:
+        """Weather sensors are nice to have: a missing one must never stop the cook being followed."""
+        try:
+            return _float(self._state(entity_id))
+        except SourceError:
+            return None
 
 
 class ReplaySource(Source):
@@ -100,6 +110,7 @@ class ReplaySource(Source):
             at=datetime.fromisoformat(row["at"]),
             pit=_float(row.get("pit")), probes=probes, fan=_float(row.get("fan")),
             fan_on=None, pit_target=_float(row.get("pit_target")), connected=True,
+            ambient=_float(row.get("ambient")), humidity=_float(row.get("humidity")),
         )
 
 

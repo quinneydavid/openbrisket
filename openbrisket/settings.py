@@ -24,6 +24,8 @@ source:
     fan: sensor.bbq_reader_fan_output
     fan_on: binary_sensor.bbq_reader_fan_switched_on
     pit_target: sensor.bbq_reader_pit_target
+    ambient: ""        # optional: an outdoor temperature sensor, logged with every cook
+    humidity: ""       # optional: an outdoor humidity sensor
 
 # Where notes and photo requests are sent. With no bot token they are printed instead.
 telegram:

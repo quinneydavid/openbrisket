@@ -197,7 +197,16 @@ class Engine:
         st["last_sample"] = _iso(now)
         if meat is not None:
             st["samples"].append([round((now - meat_on).total_seconds() / 3600, 4), meat, r.pit])
-        row = {"at": _iso(now), "pit": r.pit, "fan": r.fan, "pit_target": r.pit_target}
+        row = {"at": _iso(now), "pit": r.pit, "fan": r.fan, "pit_target": r.pit_target, "ambient": r.ambient,
+               "humidity": r.humidity}
+        p = self.projection(now) if meat is not None and "target" not in st["said"] else None
+        if p and p[0] is not None:
+            t_h = (now - meat_on).total_seconds() / 3600
+            total_h = (p[0] - meat_on).total_seconds() / 3600
+            row["est_off_min"] = round((p[0] - now).total_seconds() / 60)
+            log = st.setdefault("est_log", [])
+            if not log or t_h - log[-1][0] >= 0.25:           # one point every 15 minutes is plenty
+                log.append([round(t_h, 3), round(total_h, 3), round(p[2].weight, 2)])
         row.update({f"probe{n}": r.probe(n) for n in range(1, MAX_PROBES + 1)})
         self.store.append_curve(self.cook_id, row)
 
@@ -465,6 +474,46 @@ class Engine:
             "meat_c": meat, "estimate": est, "pipeline": self.pipeline(), "checks": self.live_checks(now, r),
             "asks": st.get("asks", []), "photo_checks": st.get("checks", {}),
         }
+
+    def analysis(self, now: datetime) -> dict:
+        """What this cook teaches: how the meat actually behaved against what the recipe assumed, and how good
+        the estimate was along the way. Written into cook.yaml when the cook closes."""
+        from statistics import mean, pstdev
+        st, rec = self.state, self.recipe
+        meat_on = self._t("meat_on_at")
+        if meat_on is None:
+            return {}
+        hours = lambda key, src=st: round((_dt(src[key]) - meat_on).total_seconds() / 3600, 2) if src.get(key) else None  # noqa: E731
+        samples = self.samples()
+        out: dict = {"meat_on_at": st["meat_on_at"], "readings": len(samples)}
+        end = self._t("rest_at") or now
+        out["hours_on_pit"] = round((end - meat_on).total_seconds() / 3600, 2)
+        out["planned_hours"] = round(rec.cook_hours(self.meta.get("weight_kg")), 2) if (
+            rec.hours_fixed is not None or self.meta.get("weight_kg")) else None
+        out["hours_to_target"] = hours("target", st["said"])
+        out["stall"] = {"start_h": hours("stall_at"), "end_h": hours("stall-end", st["said"])}
+        if out["stall"]["start_h"] is not None and out["stall"]["end_h"] is not None:
+            out["stall"]["hours"] = round(out["stall"]["end_h"] - out["stall"]["start_h"], 2)
+        out["wrapped_at_h"] = hours("wrapped_at")
+        if samples:
+            pits = [s.pit for s in samples if s.pit is not None]
+            out["pit"] = {"mean_c": round(mean(pits), 1), "min_c": round(min(pits), 1), "max_c": round(max(pits), 1),
+                          "stdev_c": round(pstdev(pits), 1), "recipe_c": rec.pit_target_c}
+            out["meat"] = {"start_c": samples[0].meat, "end_c": samples[-1].meat, "target_c": rec.meat_target_c}
+            f = model.fit(samples, self.prior, hours("wrapped_at"))
+            out["model"] = {"k_recipe": round(self.prior.k, 4), "k_fitted": round(f.params.k, 4),
+                            "k_ratio": round(f.params.k / self.prior.k, 2), "stall_factor": round(f.params.stall_factor, 3),
+                            "wrapped_factor": round(f.params.wrapped_factor, 3), "data_weight": round(f.weight, 2)}
+        total = out["hours_to_target"]
+        if total and st.get("est_log"):
+            marks = {}
+            for share in (0.25, 0.5, 0.75):
+                at = min(st["est_log"], key=lambda e: abs(e[0] - total * share))
+                if abs(at[0] - total * share) <= 0.5:
+                    marks[f"at_{int(share * 100)}pct"] = {"hours_in": at[0], "predicted_total_h": at[1],
+                                                           "error_h": round(at[1] - total, 2)}
+            out["estimate"] = {"actual_total_h": total, **marks}
+        return out
 
     # --- status -----------------------------------------------------------------------------------
     def status(self, now: datetime, r: Reading | None = None) -> str:

@@ -38,7 +38,8 @@ def _reading_dict(r: sources.Reading | None) -> dict | None:
     if r is None:
         return None
     return {"at": r.at.isoformat(timespec="seconds"), "connected": r.connected, "pit_c": r.pit,
-            "probes_c": r.probes, "fan_pct": r.fan, "fan_on": r.fan_on, "pit_target_c": r.pit_target}
+            "probes_c": r.probes, "fan_pct": r.fan, "fan_on": r.fan_on, "pit_target_c": r.pit_target,
+            "ambient_c": r.ambient, "humidity_pct": r.humidity}
 
 
 class Service:
@@ -97,7 +98,7 @@ class Service:
             if src.get("token"):
                 s["token"] = str(src["token"]).strip()
             if isinstance(src.get("entities"), dict):
-                ent = {k: v for k, v in src["entities"].items() if k != "probes" and isinstance(v, str)}
+                ent = {k: v for k, v in src["entities"].items() if k != "probes" and isinstance(v, str)}  # incl. ambient
                 ent = {k: v.strip() for k, v in ent.items()}
                 probes = src["entities"].get("probes")
                 if isinstance(probes, list):
@@ -415,6 +416,16 @@ class Service:
             if notes:
                 result["notes"] = notes
             status = "abandoned" if abandon else "done"
+            analysis = e.analysis(_now())
+            if analysis:
+                counts: dict = {}
+                for ev in e.store.events(e.cook_id):
+                    if ev["event"] in ("lid-open", "pit-drift", "fire-dying", "spritz", "probe-lost", "no-data", "behind"):
+                        counts[ev["event"]] = counts.get(ev["event"], 0) + 1
+                analysis["events"] = counts
+                meta = e.store.meta(e.cook_id)
+                meta["analysis"] = analysis
+                e.store.write_meta(e.cook_id, meta)
             e.store.close_cook(e.cook_id, _now().astimezone(), status, result)
             cook_id, self._engine = e.cook_id, None
             return {"cook": cook_id, "status": status, "result": result}
@@ -481,7 +492,8 @@ class Service:
                 probes = {str(n): num(f"probe{n}") for n in numbers}
                 present = [v for v in probes.values() if v is not None]
                 curve.append({"at": row["at"], "pit_c": num("pit"), "meat_c": min(present) if present else None,
-                              "probes_c": probes, "fan_pct": num("fan")})
+                              "probes_c": probes, "fan_pct": num("fan"), "ambient_c": num("ambient"),
+                              "humidity_pct": num("humidity"), "est_off_min": num("est_off_min")})
         meta = {k: v for k, v in m.items() if k != "recipe"}
         numbers = [int(n) for n in (m.get("probes") or [m.get("probe", 1)])]
         labels = {int(k): v for k, v in (m.get("probe_labels") or {}).items()}

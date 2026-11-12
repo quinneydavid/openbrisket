@@ -20,7 +20,7 @@ function h(tag, attrs, ...kids) {
     else if (k === "value") el.value = v;
     else el.setAttribute(k, v === true ? "" : v);
   }
-  for (const kid of kids.flat()) {
+  for (const kid of kids.flat(Infinity)) {
     if (kid === null || kid === undefined || kid === false) continue;
     el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   }
@@ -29,7 +29,7 @@ function h(tag, attrs, ...kids) {
 function s(tag, attrs, ...kids) {
   const el = document.createElementNS(SVGNS, tag);
   for (const [k, v] of Object.entries(attrs || {})) if (v !== null && v !== undefined) el.setAttribute(k, v);
-  for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  for (const kid of kids.flat(Infinity)) if (kid !== null && kid !== undefined && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   return el;
 }
 const only = (...nodes) => nodes.flat(Infinity).filter((n) => n !== null && n !== undefined && n !== false);
@@ -553,6 +553,27 @@ function cookGraph(cooks) {
   return box(`${total} cook${total === 1 ? "" : "s"} in the log`, h("div", { class: "heat", role: "img", "aria-label": `Cooks per day over the last year, ${total} in total` }, cells),
     h("div", { class: "heat-key" }, "Fewer", h("i", {}), h("i", { class: "l1" }), h("i", { class: "l2" }), h("i", { class: "l3" }), "More"));
 }
+function analysisBox(a, curve) {
+  if (!a || !a.meat_on_at) return null;
+  const hrs = (v) => (v === null || v === undefined) ? "–" : dur(v * 60);
+  const amb = curve.map((p) => p.ambient_c).filter((v) => v !== null && v !== undefined);
+  const hum = curve.map((p) => p.humidity_pct).filter((v) => v !== null && v !== undefined);
+  const avg = (xs) => xs.reduce((x, y) => x + y, 0) / xs.length;
+  const rows = [
+    ["Time on the pit", hrs(a.hours_on_pit) + (a.planned_hours ? ` (recipe expected ${hrs(a.planned_hours)})` : "")],
+    ["Reached target after", hrs(a.hours_to_target)],
+    ["Stall", a.stall && a.stall.start_h !== null ? `began at ${hrs(a.stall.start_h)}` + (a.stall.hours ? `, lasted ${hrs(a.stall.hours)}` : ", did not finish") : "none seen"],
+    ["Wrapped at", a.wrapped_at_h !== null && a.wrapped_at_h !== undefined ? hrs(a.wrapped_at_h) : "not wrapped"],
+    a.pit ? ["Pit", `averaged ${a.pit.mean_c} °C (recipe ${a.pit.recipe_c}), from ${a.pit.min_c} to ${a.pit.max_c}, varying ±${a.pit.stdev_c}`] : null,
+    a.model ? ["Heating rate", a.model.data_weight ? `${Math.round(a.model.k_ratio * 100)}% of what the recipe assumes` : "not enough readings to tell"] : null,
+    a.model && a.stall && a.stall.start_h !== null ? ["Stall slowdown", `meat heated at ${Math.round((a.wrapped_at_h !== null && a.wrapped_at_h !== undefined ? a.model.wrapped_factor : a.model.stall_factor) * 100)}% of its normal rate`] : null,
+    amb.length ? ["Outdoors", `${avg(amb).toFixed(0)} °C` + (hum.length ? `, ${avg(hum).toFixed(0)}% humidity` : "")] : null,
+    a.estimate ? ["Estimate error", ["at_25pct", "at_50pct", "at_75pct"].filter((k) => a.estimate[k]).map((k) =>
+      `${k.slice(3, 5)}% through: ${a.estimate[k].error_h > 0 ? "+" : ""}${dur(a.estimate[k].error_h * 60)}`).join(", ") || "–"] : null,
+    a.events && Object.keys(a.events).length ? ["Events", Object.entries(a.events).map(([k, n]) => `${k} ×${n}`).join(", ")] : null,
+  ].filter(Boolean);
+  return box("What this cook showed", h("div", { class: "body" }, h("dl", { class: "kv" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]))));
+}
 async function renderHistory(id) {
   if (id) {
     const d = await api("/api/cooks/" + encodeURIComponent(id));
@@ -565,6 +586,7 @@ async function renderHistory(id) {
         h("dt", {}, "Yield"), h("dd", {}, res.yield ? `${Math.round(res.yield * 100)}% (${res.cooked_weight_kg} kg cooked)` : "–"),
         h("dt", {}, "Notes"), h("dd", {}, res.notes || "–"),
         h("dt", {}, "Closed"), h("dd", {}, m.closed_at ? fullDate(m.closed_at) : "–")))),
+      analysisBox(m.analysis, d.curve),
       chartBox(d.curve, { probes: m.probes }, "Temperature"), box(`Commits (${d.events.length})`, eventLog(d.events)));
     return;
   }
@@ -587,7 +609,7 @@ async function renderSettings() {
   const save = (ev) => act(ev.target, async () => {
     await api("/api/settings", {
       source: { type: "homeassistant", url: val("s-url"), token: val("s-token"),
-        entities: { pit: val("s-pit"), probes: val("s-probes").split(/\s+/).filter(Boolean).slice(0, 9), fan: val("s-fan"), fan_on: val("s-fanon"), pit_target: val("s-target"), connected: val("s-conn") } },
+        entities: { pit: val("s-pit"), probes: val("s-probes").split(/\s+/).filter(Boolean).slice(0, 9), fan: val("s-fan"), fan_on: val("s-fanon"), pit_target: val("s-target"), connected: val("s-conn"), ambient: val("s-amb"), humidity: val("s-hum") } },
       telegram: { bot_token: val("s-bot"), chat_id: val("s-chat") }, poll_seconds: Number(val("s-poll")) || 15 });
     return "Saved.";
   });
@@ -600,6 +622,7 @@ async function renderSettings() {
         h("textarea", { id: "s-probes", rows: "6", spellcheck: "false" }, (e.probes || []).join("\n")),
         h("p", { class: "hint" }, "The order here is the probe number: the first line is probe 1.")),
       f("s-fan", "Fan output entity", e.fan), f("s-fanon", "Fan switched on entity", e.fan_on), f("s-target", "Pit target entity", e.pit_target),
+      f("s-amb", "Outdoor temperature entity (optional)", e.ambient), f("s-hum", "Outdoor humidity entity (optional)", e.humidity),
       f("s-poll", "Seconds between readings", v.poll_seconds, { type: "number" })),
       h("div", { class: "actions" }, h("button", { class: "primary", type: "button", onclick: save }, "Save"),
         h("button", { type: "button", onclick: (ev) => act(ev.target, async () => {

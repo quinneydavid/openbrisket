@@ -21,7 +21,9 @@ from datetime import datetime
 import yaml
 
 MAX_PROBES = 9
-CURVE_FIELDS = ["at", "pit", *[f"probe{n}" for n in range(1, MAX_PROBES + 1)], "fan", "pit_target"]
+# est_off_min = the estimate at that moment, in minutes until the meat comes off (blank before there is one)
+CURVE_FIELDS = ["at", "pit", *[f"probe{n}" for n in range(1, MAX_PROBES + 1)], "fan", "pit_target",
+                "ambient", "humidity", "est_off_min"]
 GIT_ID = ["-c", "user.name=OpenBrisket", "-c", "user.email=openbrisket@localhost"]
 
 
@@ -124,12 +126,16 @@ class Store:
 
     def append_curve(self, cook_id: str, row: dict) -> None:
         p = self._path(cook_id, "curve.csv")
+        fields = CURVE_FIELDS
         new = not os.path.exists(p)
+        if not new:                       # a cook opened by an older version keeps the columns it started with
+            with open(p, newline="", encoding="utf-8") as f:
+                fields = next(csv.reader(f), None) or CURVE_FIELDS
         with open(p, "a", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=CURVE_FIELDS)
+            w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
             if new:
                 w.writeheader()
-            w.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in CURVE_FIELDS})
+            w.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in fields})
 
     def load_state(self, cook_id: str) -> dict:
         p = self._path(cook_id, "state.json")
