@@ -1,0 +1,376 @@
+"""One place that does things. The web page, the JSON API, the MCP server and the background runner
+all call this, so they cannot disagree about how a cook works."""
+from __future__ import annotations
+
+import csv
+import os
+import secrets
+import threading
+import time
+from datetime import datetime, timezone
+
+import yaml
+
+from . import notify, plan as planmod, recipes, settings, smoketest, sources
+from .cook import Engine
+from .store import Store
+
+STEPS = ("meat-on", "wrap", "spritz", "rest", "note")
+
+
+class ServiceError(Exception):
+    pass
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def when(text: str) -> datetime:
+    try:
+        dt = datetime.fromisoformat(str(text).strip().replace(" ", "T", 1))
+    except ValueError:
+        raise ServiceError(f"cannot read the time '{text}'; use e.g. 2026-11-14 18:00") from None
+    return dt if dt.tzinfo else dt.astimezone()
+
+
+def _reading_dict(r: sources.Reading | None) -> dict | None:
+    if r is None:
+        return None
+    return {"at": r.at.isoformat(timespec="seconds"), "connected": r.connected, "pit_c": r.pit,
+            "probes_c": r.probes, "fan_pct": r.fan, "fan_on": r.fan_on, "pit_target_c": r.pit_target}
+
+
+class Service:
+    def __init__(self, recipe_dirs: list[str] | None = None):
+        self.lock = threading.RLock()
+        self._engine: Engine | None = None
+        self.last_reading: sources.Reading | None = None
+        self.last_error: str | None = None
+        self.recipe_dirs = recipe_dirs or self._default_recipe_dirs()
+        self._stop = threading.Event()
+
+    # --- settings ---------------------------------------------------------------------------------
+    @staticmethod
+    def _default_recipe_dirs() -> list[str]:
+        shipped = os.environ.get("OPENBRISKET_RECIPES") or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recipes")
+        return [shipped, os.path.join(settings.home(), "recipes")]
+
+    def cfg(self) -> dict:
+        return settings.load()
+
+    def store(self) -> Store:
+        return Store(settings.cooks_path(self.cfg()))
+
+    def access_token(self) -> str:
+        """The token agents and the web page present. Created on first use."""
+        with self.lock:
+            cfg = self.cfg()
+            token = (cfg.get("access") or {}).get("token")
+            if not token:
+                token = secrets.token_urlsafe(24)
+                settings.update({"access": {"token": token}})
+            return token
+
+    def settings_view(self) -> dict:
+        """Settings for the web page. Secrets are never sent back, only whether they are set."""
+        cfg = self.cfg()
+        src, tg = cfg.get("source") or {}, cfg.get("telegram") or {}
+        return {
+            "source": {"type": src.get("type"), "url": src.get("url"), "token_set": bool(src.get("token")),
+                       "entities": src.get("entities") or {}},
+            "telegram": {"bot_token_set": bool(tg.get("bot_token")), "chat_id": tg.get("chat_id") or ""},
+            "poll_seconds": cfg.get("poll_seconds", 15),
+            "cooks_path": settings.cooks_path(cfg),
+        }
+
+    def save_settings(self, body: dict) -> dict:
+        """Apply a settings form. Empty secret fields mean 'keep what is there'."""
+        patch: dict = {}
+        src = body.get("source") or {}
+        if src:
+            s: dict = {}
+            for key in ("type", "url"):
+                if src.get(key):
+                    s[key] = str(src[key]).strip()
+            if src.get("token"):
+                s["token"] = str(src["token"]).strip()
+            if isinstance(src.get("entities"), dict):
+                ent = {k: v for k, v in src["entities"].items() if k != "probes" and isinstance(v, str)}
+                ent = {k: v.strip() for k, v in ent.items()}
+                probes = src["entities"].get("probes")
+                if isinstance(probes, list):
+                    ent["probes"] = [str(p).strip() for p in probes if str(p).strip()]
+                s["entities"] = ent
+            patch["source"] = s
+        tg = body.get("telegram") or {}
+        if tg:
+            t: dict = {}
+            if tg.get("bot_token"):
+                t["bot_token"] = str(tg["bot_token"]).strip()
+            if "chat_id" in tg:
+                t["chat_id"] = str(tg["chat_id"]).strip()
+            patch["telegram"] = t
+        if body.get("poll_seconds") is not None:
+            try:
+                patch["poll_seconds"] = min(300, max(3, int(body["poll_seconds"])))
+            except (TypeError, ValueError):
+                raise ServiceError("poll_seconds must be a number") from None
+        with self.lock:
+            settings.update(patch)
+            self._engine = None          # pick up a new notifier
+        return self.settings_view()
+
+    def test_source(self) -> dict:
+        try:
+            r = sources.from_settings(self.cfg().get("source")).read()
+        except sources.SourceError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": r.pit is not None, "reading": _reading_dict(r),
+                "error": None if r.pit is not None else "connected, but there is no pit reading"}
+
+    def test_notify(self) -> dict:
+        n = notify.from_settings(self.cfg())
+        if isinstance(n, notify.ConsoleNotifier):
+            return {"ok": False, "error": "no Telegram bot is set; notes are only printed to the log"}
+        ok = n.send("OpenBrisket: test note. Notes from your cooks will arrive here.")
+        return {"ok": ok, "error": None if ok else "Telegram refused the message; check the bot token and chat id"}
+
+    # --- recipes ----------------------------------------------------------------------------------
+    def _recipe_files(self) -> dict[str, str]:
+        found: dict[str, str] = {}
+        for d in self.recipe_dirs:
+            if not os.path.isdir(d):
+                continue
+            for name in sorted(os.listdir(d)):
+                if name.endswith((".yaml", ".yml")):
+                    found[os.path.splitext(name)[0]] = os.path.join(d, name)
+        return found
+
+    def list_recipes(self) -> list[dict]:
+        out = []
+        for rid, path in self._recipe_files().items():
+            try:
+                r = recipes.load_recipe(path)
+            except (recipes.RecipeError, yaml.YAMLError, OSError) as e:
+                out.append({"id": rid, "valid": False, "error": str(e)})
+                continue
+            with open(path, encoding="utf-8") as f:
+                source = f.read()
+            rub = None
+            if r.rub:
+                try:
+                    with open(os.path.join(os.path.dirname(path), r.rub), encoding="utf-8") as f:
+                        doc = yaml.safe_load(f)
+                    rub = {"name": doc.get("name"), "description": doc.get("description", ""),
+                           "ingredients": doc.get("ingredients"), **recipes.rub_fractions(doc)}
+                except (OSError, yaml.YAMLError):
+                    rub = None
+            out.append({
+                "id": rid, "valid": True, "name": r.name, "version": r.version, "cut": r.cut,
+                "description": r.description, "pit_target_c": r.pit_target_c, "meat_target_c": r.meat_target_c,
+                "hours_per_kg": r.hours_per_kg, "hours_fixed": r.hours_fixed, "wrap_at_c": r.wrap_at_c,
+                "wrap_material": r.wrap_material, "rest_ideal_minutes": r.rest_ideal_minutes, "rub": rub,
+                "source": source,
+            })
+        return out
+
+    def _recipe(self, recipe_id: str) -> recipes.Recipe:
+        path = self._recipe_files().get(recipe_id)
+        if not path:
+            raise ServiceError(f"no recipe called '{recipe_id}'; there are: {', '.join(self._recipe_files()) or 'none'}")
+        try:
+            return recipes.load_recipe(path)
+        except recipes.RecipeError as e:
+            raise ServiceError(str(e)) from None
+
+    def plan(self, recipe_id: str, weight_kg: float | None, serve_at: str) -> dict:
+        recipe = self._recipe(recipe_id)
+        try:
+            p = planmod.make_plan(recipe, weight_kg, when(serve_at))
+        except recipes.RecipeError as e:
+            raise ServiceError(str(e)) from None
+        return {"recipe": recipe.name, "version": recipe.version, "weight_kg": weight_kg,
+                "cook_hours": round(p.cook_hours, 2), "text": planmod.render(p),
+                "steps": [{"at": s.at.isoformat(timespec="minutes"), "step": s.what, "detail": s.detail}
+                          for s in p.steps]}
+
+    # --- the cook ---------------------------------------------------------------------------------
+    def engine(self) -> Engine | None:
+        with self.lock:
+            store = self.store()
+            cook_id = store.active()
+            if not cook_id:
+                self._engine = None
+                return None
+            if self._engine is None or self._engine.cook_id != cook_id:
+                meta = store.meta(cook_id)
+                recipe = recipes.from_doc(meta["recipe"], meta.get("recipe_path", ""))
+                self._engine = Engine(recipe, meta, store, notify.from_settings(self.cfg()), cook_id)
+            return self._engine
+
+    def _need_engine(self) -> Engine:
+        e = self.engine()
+        if e is None:
+            raise ServiceError("no cook is open")
+        return e
+
+    def start(self, recipe_id: str, weight_kg: float | None, serve_at: str, probe: int = 1) -> dict:
+        with self.lock:
+            recipe = self._recipe(recipe_id)
+            serve = when(serve_at)
+            try:
+                p = planmod.make_plan(recipe, weight_kg, serve)
+            except recipes.RecipeError as e:
+                raise ServiceError(str(e)) from None
+            meta = {
+                "recipe_name": recipe.name, "recipe_version": recipe.version, "recipe_path": recipe.path,
+                "weight_kg": weight_kg, "serve_at": serve.isoformat(timespec="seconds"), "probe": int(probe),
+                "plan": [{"at": s.at.isoformat(timespec="minutes"), "step": s.what} for s in p.steps],
+                "recipe": recipe.raw,
+            }
+            store = self.store()
+            if store.active():
+                raise ServiceError(f"cook {store.active()} is still open; close it first")
+            cook_id = store.open_cook(recipe.name, _now().astimezone(), meta)
+            self._engine = None
+            return {"cook": cook_id, "plan": planmod.render(p)}
+
+    def log_step(self, kind: str, note: str = "") -> dict:
+        kind = str(kind).strip().lower()
+        if kind not in STEPS:
+            raise ServiceError(f"unknown step '{kind}'; use one of: {', '.join(STEPS)}")
+        if kind == "note" and not note.strip():
+            raise ServiceError("a note needs some text")
+        with self.lock:
+            e = self._need_engine()
+            if kind == "meat-on" and e.state.get("meat_on_at"):
+                raise ServiceError("the meat is already logged as on")
+            if kind in ("wrap", "rest") and not e.state.get("meat_on_at"):
+                raise ServiceError("log meat-on first")
+            ev = e.manual(kind, note.strip(), _now())
+            return {"cook": e.cook_id, "logged": ev.message}
+
+    def smoke_test(self) -> dict:
+        with self.lock:
+            e = self._need_engine()
+            r = self.read_now()
+            if r is None:
+                r = sources.Reading(at=_now(), connected=False)
+            checks = smoketest.run(e.recipe, r, e.state.get("recent", []), e.notifier, e.probe_no)
+            ok = smoketest.passed(checks)
+            e.store.add_event(e.cook_id, r.at, "smoke-test", "smoke test " + ("passed" if ok else "failed"),
+                              {c.name: c.result for c in checks})
+            e.note_smoke_test(r.at, ok)
+            return {"passed": ok, "checks": [{"name": c.name, "result": c.result, "detail": c.detail} for c in checks],
+                    "text": smoketest.render(checks)}
+
+    def close(self, score: float | None = None, cooked_weight_kg: float | None = None, notes: str = "",
+              abandon: bool = False) -> dict:
+        with self.lock:
+            e = self._need_engine()
+            result: dict = {}
+            if score is not None:
+                if not 0 <= float(score) <= 10:
+                    raise ServiceError("score is 0 to 10")
+                result["score"] = float(score)
+            if cooked_weight_kg is not None:
+                result["cooked_weight_kg"] = float(cooked_weight_kg)
+                raw = e.meta.get("weight_kg")
+                if raw:
+                    result["yield"] = round(float(cooked_weight_kg) / float(raw), 3)
+            if notes:
+                result["notes"] = notes
+            status = "abandoned" if abandon else "done"
+            e.store.close_cook(e.cook_id, _now().astimezone(), status, result)
+            cook_id, self._engine = e.cook_id, None
+            return {"cook": cook_id, "status": status, "result": result}
+
+    # --- reading ----------------------------------------------------------------------------------
+    def read_now(self) -> sources.Reading | None:
+        try:
+            r = sources.from_settings(self.cfg().get("source")).read()
+            self.last_reading, self.last_error = r, None
+            return r
+        except (sources.SourceError, KeyError) as e:
+            self.last_error = str(e)
+            return None
+
+    def status(self) -> dict:
+        with self.lock:
+            e = self.engine()
+            r = self.last_reading
+            if r is not None and (_now() - r.at).total_seconds() > 120:
+                r = None
+            return {"now": _now().isoformat(timespec="seconds"), "reading": _reading_dict(r),
+                    "source_error": self.last_error,
+                    "cook": e.overview(_now(), r) if e else None}
+
+    def status_text(self) -> str:
+        with self.lock:
+            e = self.engine()
+            r = self.last_reading or self.read_now()
+            if e is None:
+                if r is None or r.pit is None:
+                    return "No cook is open, and there is no pit reading right now."
+                return f"No cook is open. Pit is at {r.pit:.0f} C."
+            return e.status(_now(), r)
+
+    # --- history ----------------------------------------------------------------------------------
+    def cooks(self) -> list[dict]:
+        store = self.store()
+        out = []
+        for cook_id in reversed(store.cooks()):
+            m = store.meta(cook_id)
+            out.append({"id": cook_id, "recipe": m.get("recipe_name"), "version": m.get("recipe_version"),
+                        "status": m.get("status"), "weight_kg": m.get("weight_kg"), "opened_at": m.get("opened_at"),
+                        "closed_at": m.get("closed_at"), "result": m.get("result") or {}})
+        return out
+
+    def cook(self, cook_id: str, max_points: int = 600) -> dict:
+        store = self.store()
+        if cook_id not in store.cooks():
+            raise ServiceError(f"no cook called '{cook_id}'")
+        m = store.meta(cook_id)
+        curve: list[dict] = []
+        path = os.path.join(store.dir(cook_id), "curve.csv")
+        if os.path.exists(path):
+            with open(path, newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+            stride = max(1, len(rows) // max_points)
+            probe = f"probe{int(m.get('probe', 1))}"
+            for row in rows[::stride] + (rows[-1:] if stride > 1 else []):
+                def num(key):
+                    try:
+                        return float(row.get(key) or "")
+                    except ValueError:
+                        return None
+                curve.append({"at": row["at"], "pit_c": num("pit"), "meat_c": num(probe), "fan_pct": num("fan")})
+        meta = {k: v for k, v in m.items() if k != "recipe"}
+        return {"meta": meta, "events": store.events(cook_id), "curve": curve}
+
+    # --- background runner ------------------------------------------------------------------------
+    def run_forever(self) -> None:
+        while not self._stop.is_set():
+            every = 15.0
+            try:
+                every = float(self.cfg().get("poll_seconds", 15))
+                r = self.read_now()
+                with self.lock:
+                    e = self.engine()
+                    if e is not None:
+                        e.tick(r if r is not None else sources.Reading(at=_now(), connected=False))
+            except Exception as ex:  # keep the loop alive whatever one tick does
+                self.last_error = f"runner: {ex}"
+                print(f"runner: {ex!r}", flush=True)
+            self._stop.wait(max(3.0, every))
+
+    def start_runner(self) -> threading.Thread:
+        t = threading.Thread(target=self.run_forever, name="openbrisket-runner", daemon=True)
+        t.start()
+        return t
+
+    def stop(self) -> None:
+        self._stop.set()
+        time.sleep(0)

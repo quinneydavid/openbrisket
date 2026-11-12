@@ -1,0 +1,13 @@
+# OpenBrisket in one container. Open http://localhost:8321 and paste the access token from the log:
+#   docker compose logs openbrisket | grep "access token"
+services:
+  openbrisket:
+    build: .
+    image: openbrisket:0.2.0
+    restart: unless-stopped
+    ports:
+      - "8321:8321"
+    volumes:
+      - openbrisket-data:/data      # settings and your private cook log
+volumes:
+  openbrisket-data:

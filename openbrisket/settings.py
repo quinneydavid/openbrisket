@@ -74,3 +74,27 @@ def load() -> dict:
 
 def cooks_path(cfg: dict) -> str:
     return os.path.expanduser((cfg.get("cooks") or {}).get("path") or "") or os.path.join(home(), "cooks")
+
+
+def _merge(base: dict, patch: dict) -> dict:
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def update(patch: dict) -> dict:
+    """Merge `patch` into the settings file (creating it if needed) and return the result."""
+    p, _created = init()
+    with open(p, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    _merge(cfg, patch)
+    tmp = p + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("# OpenBrisket settings. This file holds secrets: keep it private.\n")
+        yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
+    os.replace(tmp, p)
+    return cfg

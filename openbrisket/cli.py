@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -186,6 +187,12 @@ def cmd_close(args) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    from . import server
+    server.serve(args.host, args.port)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="openbrisket", description="PitOps for your smoker.")
     ap.add_argument("--version", action="version", version=f"openbrisket {__version__}")
@@ -233,6 +240,11 @@ def main(argv=None) -> int:
     p.add_argument("--notes")
     p.add_argument("--abandon", action="store_true", help="close without merging (a cook that went wrong)")
     p.set_defaults(fn=cmd_close)
+
+    p = sub.add_parser("serve", help="run the web page, the API and the MCP endpoint, and follow cooks")
+    p.add_argument("--host", default=os.environ.get("OPENBRISKET_HOST", "127.0.0.1"))
+    p.add_argument("--port", type=int, default=int(os.environ.get("OPENBRISKET_PORT", "8321")))
+    p.set_defaults(fn=cmd_serve)
 
     args = ap.parse_args(argv)
     try:

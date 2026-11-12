@@ -291,6 +291,128 @@ class Engine:
                                       f"longer is better up to {rec.rest_ideal_minutes} min.", "info")]
         return []
 
+    # --- structured views for the web page, the API and agents ------------------------------------
+    def phase(self) -> str:
+        st = self.state
+        if st.get("rest_at"):
+            return "resting"
+        if not st.get("meat_on_at"):
+            return "preheating"
+        if st.get("stall_at") and "stall-end" not in st["said"]:
+            return "stall"
+        return "cooking"
+
+    def pipeline(self) -> list[dict]:
+        """The cook as a row of stages: done, active, failed or pending, with the time each was reached."""
+        st, said, rec = self.state, self.state["said"], self.recipe
+        smoke = st.get("smoke")
+        stages = [
+            ("smoke-test", "Smoke test", (smoke or {}).get("at") if smoke and smoke.get("passed") else None),
+            ("meat-on", "Meat on", st.get("meat_on_at")),
+            ("stall", "Stall", st.get("stall_at")),
+        ]
+        if rec.wrap_at_c is not None:
+            stages.append(("wrap", "Wrap", st.get("wrapped_at")))
+        stages += [
+            ("stall-end", "Through the stall", said.get("stall-end")),
+            ("target", "Probe tender", said.get("target")),
+            ("rest", "Rest", st.get("rest_at")),
+        ]
+        out, active_set = [], False
+        last_done = max((i for i, s in enumerate(stages) if s[2]), default=-1)
+        for i, (key, title, at) in enumerate(stages):
+            if at:
+                state = "done"
+            elif i < last_done:
+                state = "skipped"
+            elif not active_set:
+                state, active_set = "active", True
+            else:
+                state = "pending"
+            if key == "smoke-test" and smoke and not smoke.get("passed") and not at:
+                state = "failed"
+            out.append({"key": key, "title": title, "state": state, "at": at})
+        return out
+
+    def note_smoke_test(self, now: datetime, ok: bool) -> None:
+        self.state["smoke"] = {"at": _iso(now), "passed": ok}
+        self.store.save_state(self.cook_id, self.state)
+
+    def live_checks(self, now: datetime, r: Reading | None) -> list[dict]:
+        """Status checks on the running cook: pass, fail or pending, each with one line of detail."""
+        rec, st = self.recipe, self.state
+        out = []
+
+        def add(name, state, detail):
+            out.append({"name": name, "state": state, "detail": detail})
+
+        if r is None or not r.connected or r.pit is None:
+            add("data-feed", "fail", "no readings from the pit")
+            return out
+        add("data-feed", "pass", "readings arriving")
+        if not st.get("meat_on_at"):
+            smoke = st.get("smoke")
+            if smoke:
+                add("smoke-test", "pass" if smoke["passed"] else "fail",
+                    "passed" if smoke["passed"] else "failed; fix and run it again")
+            else:
+                add("smoke-test", "pending", "run it once the pit is steady")
+            return out
+        if st.get("rest_at"):
+            mins = (now - _dt(st["rest_at"])).total_seconds() / 60
+            add("rest", "pass" if mins >= rec.rest_min_minutes else "pending",
+                f"{mins:.0f} of {rec.rest_min_minutes} min minimum ({rec.rest_ideal_minutes} ideal)")
+            return out
+        pits = self._recent_pit(now, 15) or [r.pit]
+        mid = median(pits)
+        ok = abs(mid - rec.pit_target_c) <= rec.pit_tolerance_c
+        add("pit-stable", "pass" if ok else "fail",
+            f"averaging {mid:.0f} C, recipe {rec.pit_target_c:.0f} +/- {rec.pit_tolerance_c:.0f}")
+        if r.fan is not None:
+            add("fan-headroom", "fail" if r.fan >= 95 else "pass", f"fan at {r.fan:.0f}%")
+        meat = r.probe(self.probe_no)
+        add("meat-probe", "pass" if meat is not None else "fail",
+            f"{meat:.1f} C" if meat is not None else f"probe {self.probe_no} is not reading")
+        if rec.wrap_at_c is not None:
+            if st.get("wrapped_at"):
+                add("wrapped", "pass", "wrapped")
+            elif meat is not None and meat >= rec.wrap_at_c:
+                add("wrapped", "fail", f"past the wrap point of {rec.wrap_at_c:.0f} C and not wrapped")
+            else:
+                add("wrapped", "pending", f"wrap at about {rec.wrap_at_c:.0f} C")
+        if self.serve_at:
+            p = self.projection(now)
+            if not p or len(st["samples"]) < 20:
+                add("on-schedule", "pending", "not enough readings yet")
+            elif p[0] is None:
+                add("on-schedule", "fail", "will not reach target at this pit temperature")
+            else:
+                slack = (self.serve_at - p[0]).total_seconds() / 60
+                add("on-schedule", "pass" if slack >= rec.rest_min_minutes else "fail",
+                    f"off about {p[0].astimezone().strftime('%H:%M')}, {slack:.0f} min before serving")
+        return out
+
+    def overview(self, now: datetime, r: Reading | None) -> dict:
+        rec, st = self.recipe, self.state
+        meat = r.probe(self.probe_no) if r else None
+        est = None
+        p = self.projection(now) if st.get("meat_on_at") and not st.get("rest_at") else None
+        if p:
+            off, _proj, f = p
+            est = {"off_at": _iso(off) if off else None, "data_weight": round(f.weight, 2)}
+            if off and self.serve_at:
+                est["rest_available_min"] = round((self.serve_at - off).total_seconds() / 60)
+        return {
+            "id": self.cook_id, "recipe": rec.name, "recipe_version": rec.version, "cut": rec.cut,
+            "weight_kg": self.meta.get("weight_kg"), "serve_at": self.meta.get("serve_at"),
+            "opened_at": self.meta.get("opened_at"), "phase": self.phase(), "wrapped": bool(st.get("wrapped_at")),
+            "meat_on_at": st.get("meat_on_at"), "probe": self.probe_no,
+            "targets": {"pit_c": rec.pit_target_c, "pit_tolerance_c": rec.pit_tolerance_c,
+                        "meat_c": rec.meat_target_c, "stall_from_c": rec.stall_from_c, "stall_to_c": rec.stall_to_c,
+                        "wrap_at_c": rec.wrap_at_c},
+            "meat_c": meat, "estimate": est, "pipeline": self.pipeline(), "checks": self.live_checks(now, r),
+        }
+
     # --- status -----------------------------------------------------------------------------------
     def status(self, now: datetime, r: Reading | None = None) -> str:
         rec, st = self.recipe, self.state

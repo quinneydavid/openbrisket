@@ -64,16 +64,46 @@ While `run` is going it leaves notes (on Telegram if you set a bot, in the termi
 | Probe or feed lost | No reading from the meat probe, or from the pit at all |
 | Rest | Minimum and ideal rest reached |
 
-## Install
+## Run it
 
-Python 3.10 or newer and git.
+With Docker:
+
+```console
+$ docker compose up -d
+$ docker compose logs openbrisket | grep "access token"
+```
+
+Open http://localhost:8321, paste the access token once, and set where readings come from on the
+Settings page. Settings and your cook log live in the `openbrisket-data` volume.
+
+Without Docker (Python 3.10 or newer, and git):
 
 ```console
 $ pip install .
-$ openbrisket init           # writes the settings file and prints where it is
+$ openbrisket serve
 ```
 
-Edit the settings file to say where readings come from and where notes go.
+The same commands the page uses are available in the terminal: `plan`, `apply`, `run`, `smoke-test`,
+`log`, `status`, `history`, `close`. `openbrisket serve` follows the open cook by itself; `run` is for
+using the terminal alone.
+
+## The page
+
+- **Cook**: the open cook as a row of stages, live temperatures, the curve with the estimate drawn
+  ahead, status checks, buttons for the steps you do by hand, and the commit log.
+- **Recipes**: every recipe with its numbers, rub and source file.
+- **History**: a year of cooks at a glance, and each past cook with its curve, events and score.
+- **Settings**: readings, Telegram, and the address and token for agents.
+
+Everything under `/api` and `/mcp` needs the access token. Put the page behind HTTPS (a reverse proxy)
+before reaching it from outside your home network.
+
+## Agents
+
+- **MCP**: `POST /mcp` is a Model Context Protocol server (streamable HTTP) with tools to check a cook,
+  plan, open, smoke-test, log steps and close. Send the access token as a bearer token.
+- **Agent skill**: [agent-skill/openbrisket](agent-skill/openbrisket/SKILL.md) teaches an agent the
+  same calls over the JSON API, and how to talk about a cook.
 
 ## Readings
 
@@ -101,7 +131,6 @@ a first version. It has been tested against simulated cooks, not yet against man
 - Photo checks: sending a photo of the bark or the slice and getting data points back.
 - Opening each cook as a GitHub pull request, and recipe suggestions as pull requests after a cook.
 - Learning from finished cooks.
-- A web page for looking back at cooks.
 
 ## Food safety
 

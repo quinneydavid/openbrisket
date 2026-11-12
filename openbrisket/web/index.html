@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>OpenBrisket</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-row">
+    <a class="brand" href="#cook"><span class="mark" aria-hidden="true"></span>OpenBrisket</a>
+    <span class="tagline">PitOps for your smoker</span>
+    <span class="live" id="live" hidden></span>
+  </div>
+  <nav class="wrap tabs" id="tabs" aria-label="Sections">
+    <a href="#cook" data-tab="cook">Cook</a>
+    <a href="#recipes" data-tab="recipes">Recipes</a>
+    <a href="#history" data-tab="history">History</a>
+    <a href="#settings" data-tab="settings">Settings</a>
+  </nav>
+</header>
+<main class="wrap" id="main" aria-live="polite"></main>
+<div class="tip" id="tip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
