@@ -212,6 +212,19 @@ class ServiceTests(Base):
         self.service.record_check("smoke", {"colour": "thin-blue"}, "ok")
         self.assertEqual({c["name"]: c["result"] for c in self.service.smoke_test()["checks"]}["clean-smoke"], "pass")
 
+    def test_a_probe_can_be_taken_out_and_put_back_by_hand(self):
+        self.service.start("texas-brisket", 5.4, self.serve_at, [1, 2])
+        self.service.log_step("meat-on")
+        out = self.service.set_probe(2, False)
+        self.assertEqual(out["in_meat"], [1])
+        self.assertEqual(self.service.set_probe(2, False)["logged"], "no change")
+        self.service.read_now()
+        probes = {p["no"]: p["in_meat"] for p in self.service.status()["cook"]["probes"]}
+        self.assertEqual(probes, {1: True, 2: False})
+        self.assertEqual(self.service.set_probe("2", True)["in_meat"], [1, 2])
+        with self.assertRaises(ServiceError):
+            self.service.set_probe(7, False)
+
     def test_probe_selection(self):
         p = self.service._probes
         self.assertEqual((p(None), p(2), p("1, 3,3"), p([4, "2", 4])), ([1], [2], [1, 3], [4, 2]))
@@ -273,7 +286,7 @@ class McpTests(Base):
                          mcp.PROTOCOL_VERSIONS[0])
         self.assertIsNone(mcp.handle(self.service, {"jsonrpc": "2.0", "method": "notifications/initialized"}))
         names = [t["name"] for t in self.call("tools/list")["result"]["tools"]]
-        self.assertEqual(len(names), 12)
+        self.assertEqual(len(names), 13)
         for t in self.call("tools/list")["result"]["tools"]:
             self.assertEqual(t["inputSchema"]["type"], "object")
         self.assertEqual(self.call("nope")["error"]["code"], -32601)

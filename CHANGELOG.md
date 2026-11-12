@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+
+- Probes can come and go. A probe that falls 6 C or more inside three minutes is taken as pulled out and stops
+  counting, with a note; if it goes back in and returns to about where it was, it counts again. The coldest probe
+  still in the meat decides everything, so pulling all but one for the hold just works.
+- An unplugged probe is simply not counted, and is no longer a failed check during the hold.
+- "out" / "back in" buttons beside each probe on the cook page, and a `set_probe` MCP tool, for saying so by hand.
+
 ## 0.6.0
 
 - The hold is followed. After "Off, resting / holding" the app keeps recording every probe, and shows how long the

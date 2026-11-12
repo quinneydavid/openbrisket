@@ -20,6 +20,8 @@ SAMPLE_EVERY_S = 60          # the model and the curve keep one point a minute
 RECENT_KEEP_S = 20 * 60      # raw readings kept for the fast checks
 STALL_RATE_C_PER_H = 2.0     # slower than this inside the stall band = stalled
 LID_DROP_C = 15.0            # pit falling this much inside a few minutes = lid open
+PULLED_DROP_C = 6.0          # a meat probe falling this much inside 3 minutes has been pulled out: meat cannot
+PULLED_WINDOW_S = 180        # cool that fast, even uncovered
 
 
 @dataclass
@@ -83,9 +85,72 @@ class Engine:
     def probe_values(self, r: Reading | None) -> dict[int, float | None]:
         return {n: (r.probe(n) if r else None) for n in self.probe_nos}
 
+    def probes_out(self) -> dict:
+        """Probes that were ticked for this cook but are no longer in the meat (pulled, by hand or noticed)."""
+        return {int(k): v for k, v in self.state.get("probes_out", {}).items()}
+
+    def in_meat(self, r: Reading | None) -> dict[int, float]:
+        """Readings of the probes that are in the meat right now: ticked, not pulled, and reading."""
+        out = self.probes_out()
+        return {n: v for n, v in self.probe_values(r).items() if v is not None and n not in out}
+
     def coldest(self, r: Reading | None) -> float | None:
-        values = [v for v in self.probe_values(r).values() if v is not None]
+        """The meat temperature that governs every decision: the coldest probe still in the meat. Probes come
+        and go during a cook, so this is recomputed from whatever is in the meat at that moment."""
+        values = list(self.in_meat(r).values())
         return min(values) if values else None
+
+    def set_probe(self, no: int, in_meat: bool, now: datetime, why: str = "by hand") -> Event | None:
+        st = self.state
+        out = st.setdefault("probes_out", {})
+        key = str(int(no))
+        if int(no) not in self.probe_nos:
+            return None
+        if in_meat and key in out:
+            del out[key]
+            st.get("probe_track", {}).pop(key, None)
+            e = Event("probe-in", f"{self.probe_name(int(no))} is counted again ({why})")
+        elif not in_meat and key not in out:
+            out[key] = {"at": _iso(now), "why": why}
+            e = Event("probe-out", f"{self.probe_name(int(no))} is no longer counted ({why})")
+        else:
+            return None
+        self.store.add_event(self.cook_id, now, e.kind, e.message)
+        self.store.save_state(self.cook_id, st)
+        return e
+
+    def _watch_probes(self, now: datetime, r: Reading) -> list[Event]:
+        """Notice a probe being pulled out of the meat (it suddenly reads far lower) and stop counting it, and
+        notice it going back in (it returns to about where it was)."""
+        st = self.state
+        track = st.setdefault("probe_track", {})
+        out = st.setdefault("probes_out", {})
+        events: list[Event] = []
+        for n, v in self.probe_values(r).items():
+            key = str(n)
+            if v is None:
+                continue
+            hist = track.setdefault(key, [])
+            hist.append([_iso(now), v])
+            cutoff = now - timedelta(seconds=PULLED_WINDOW_S)
+            hist[:] = [h for h in hist if _dt(h[0]) >= cutoff]
+            if key in out:
+                before = out[key].get("before_c")
+                if out[key].get("why", "").startswith("noticed") and before is not None and before - 5 <= v <= before + 8:
+                    del out[key]
+                    hist[:] = [[_iso(now), v]]
+                    events.append(Event("probe-in", f"{self.probe_name(n)} is back at {v:.0f} C and is counted again"))
+                continue
+            peak = max(h[1] for h in hist)
+            if peak - v >= PULLED_DROP_C:
+                out[key] = {"at": _iso(now), "why": "noticed: fell fast", "before_c": peak}
+                left = [self.probe_name(m) for m in self.probe_nos if str(m) not in out and r.probe(m) is not None]
+                events.append(Event("probe-out", f"{self.probe_name(n)} fell from {peak:.0f} to {v:.0f} C in under "
+                                                 f"{PULLED_WINDOW_S // 60} minutes: it looks pulled out, so it is no "
+                                                 f"longer counted. " + (f"Still in the meat: {', '.join(left)}."
+                                                                        if left else "No probe is left in the meat."),
+                                    "info", {"probe": n, "from_c": round(peak, 1), "to_c": round(v, 1)}))
+        return events
 
     def samples(self) -> list[model.Sample]:
         return [model.Sample(*s) for s in self.state["samples"]]
@@ -153,6 +218,9 @@ class Engine:
         cutoff = now - timedelta(seconds=RECENT_KEEP_S)
         st["recent"] = [x for x in st["recent"] if _dt(x[0]) >= cutoff]
 
+        if self._t("meat_on_at"):
+            events += self._watch_probes(now, r)
+            meat = self.coldest(r)
         if self._t("rest_at"):
             events += self._hold(now, self._t("rest_at"), meat, r)
             self._finish(events, now)
@@ -491,8 +559,10 @@ class Engine:
                 add("hold-temperature", "fail", f"{h['meat_c']:.1f} C, below the {rec.hold_min_c:.0f} C floor")
             else:
                 left = h.get("hours_until_floor")
+                using = self.in_meat(r)
                 add("hold-temperature", "pass", f"{h['meat_c']:.1f} C, floor {rec.hold_min_c:.0f} C"
-                    + (f", about {fmt_dur(left)} left at this rate" if left else ""))
+                    + (f", about {fmt_dur(left)} left at this rate" if left else "")
+                    + (f" (from {', '.join(self.probe_name(n) for n in using)})" if using else ""))
             return out
         pits = self._recent_pit(now, 15) or [r.pit]
         mid = median(pits)
@@ -501,18 +571,21 @@ class Engine:
             f"averaging {mid:.0f} C, recipe {rec.pit_target_c:.0f} +/- {rec.pit_tolerance_c:.0f}")
         if r.fan is not None:
             add("fan-headroom", "fail" if r.fan >= 95 else "pass", f"fan at {r.fan:.0f}%")
-        values = self.probe_values(r)
+        pulled = self.probes_out()
+        values = {n: v for n, v in self.probe_values(r).items() if n not in pulled}
+        live = self.in_meat(r)
         meat = self.coldest(r)
         missing = [self.probe_name(n) for n, v in values.items() if v is None]
+        note = f"; pulled: {', '.join(self.probe_name(n) for n in pulled)}" if pulled else ""
         if meat is None:
-            add("meat-probes", "fail", "no meat probe is reading")
+            add("meat-probes", "fail", "no probe is reading in the meat" + note)
         elif missing:
-            add("meat-probes", "fail", f"not reading: {', '.join(missing)}")
-        elif len(values) > 1:
-            spread = max(values.values()) - meat
-            add("meat-probes", "pass", f"{len(values)} probes, coldest {meat:.1f} C, spread {spread:.1f} C")
+            add("meat-probes", "fail", f"not reading: {', '.join(missing)}" + note)
+        elif len(live) > 1:
+            spread = max(live.values()) - meat
+            add("meat-probes", "pass", f"{len(live)} probes, coldest {meat:.1f} C, spread {spread:.1f} C" + note)
         else:
-            add("meat-probes", "pass", f"{meat:.1f} C")
+            add("meat-probes", "pass", f"{meat:.1f} C" + note)
         if rec.wrap_at_c is not None:
             if st.get("wrapped_at"):
                 add("wrapped", "pass", "wrapped")
@@ -547,7 +620,8 @@ class Engine:
             "weight_kg": self.meta.get("weight_kg"), "serve_at": self.meta.get("serve_at"),
             "opened_at": self.meta.get("opened_at"), "phase": self.phase(), "wrapped": bool(st.get("wrapped_at")),
             "meat_on_at": st.get("meat_on_at"),
-            "probes": [{"no": n, "label": self.probe_name(n), "temp_c": v} for n, v in self.probe_values(r).items()],
+            "probes": [{"no": n, "label": self.probe_name(n), "temp_c": v, "in_meat": n not in self.probes_out()}
+                       for n, v in self.probe_values(r).items()],
             "targets": {"pit_c": rec.pit_target_c, "pit_tolerance_c": rec.pit_tolerance_c,
                         "meat_c": rec.meat_target_c, "stall_from_c": rec.stall_from_c, "stall_to_c": rec.stall_to_c,
                         "wrap_at_c": rec.wrap_at_c},
@@ -631,8 +705,8 @@ class Engine:
                          + f" (recipe {rec.pit_target_c:.0f}), meat "
                          + (f"{meat:.1f} C" if meat is not None else "no reading")
                          + (" (coldest of " + ", ".join(f"{self.probe_name(n)} {v:.1f}" for n, v in
-                                                        self.probe_values(r).items() if v is not None) + ")"
-                            if len(self.probe_nos) > 1 and meat is not None else "")
+                                                        self.in_meat(r).items()) + ")"
+                            if len(self.in_meat(r)) > 1 and meat is not None else "")
                          + f" (target {rec.meat_target_c:.0f}), fan "
                          + (f"{r.fan:.0f}%" if r.fan is not None else "n/a"))
         p = self.projection(now) if meat_on and not self._t("rest_at") else None

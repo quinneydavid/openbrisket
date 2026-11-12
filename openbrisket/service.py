@@ -366,6 +366,20 @@ class Service:
             ev = e.manual(kind, note.strip(), _now())
             return {"cook": e.cook_id, "logged": ev.message}
 
+    def set_probe(self, probe, in_meat: bool) -> dict:
+        """Say that a probe has been pulled out of the meat, or put back in."""
+        with self.lock:
+            e = self._need_engine()
+            try:
+                no = int(probe)
+            except (TypeError, ValueError):
+                raise ServiceError("probe is a number") from None
+            if no not in e.probe_nos:
+                raise ServiceError(f"probe {no} is not one of this cook's probes ({', '.join(map(str, e.probe_nos))})")
+            ev = e.set_probe(no, bool(in_meat), _now())
+            return {"cook": e.cook_id, "logged": ev.message if ev else "no change",
+                    "in_meat": [n for n in e.probe_nos if n not in e.probes_out()]}
+
     def record_check(self, kind: str, data: dict | None, verdict: str | None = None, by: str = "",
                      note: str = "") -> dict:
         """Store what a photo showed as data points (the photo itself is never stored)."""

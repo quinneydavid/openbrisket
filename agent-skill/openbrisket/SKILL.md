@@ -102,6 +102,8 @@ Rules for judging:
 
 - Answer "how's the brisket?" in two or three sentences: phase, meat temperature against target, when
   it comes off, and anything failing. Do not read out every field.
+- Probes come and go: `probes[].in_meat` is false for one that has been pulled out. OpenBrisket notices a pulled
+  probe by its sudden fall; use `set_probe` only when the cook tells you they pulled or re-inserted one.
 - Only log a step the cook says they have done. Never log `meat-on`, `wrap` or `rest` on a guess: they
   change how the cook is followed.
 - The stall (meat sitting around 65 to 77 °C for hours) is normal. Do not treat it as a problem.

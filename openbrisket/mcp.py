@@ -101,6 +101,13 @@ TOOLS = [
      "inputSchema": _obj({"step": {"type": "string", "enum": list(STEPS)},
                           "note": {"type": "string", "description": "Optional detail; required for step=note"}},
                          ["step"])},
+    {"name": "set_probe",
+     "description": "Tell the cook follower that a probe has been pulled out of the meat (in_meat=false) or put back "
+                    "(in_meat=true). A pulled probe is no longer counted; the coldest probe still in the meat decides "
+                    "everything. A probe that suddenly falls is noticed and dropped by itself, so this is only for "
+                    "when the cook says so first.",
+     "inputSchema": _obj({"probe": {"type": "integer", "minimum": 1, "maximum": 9}, "in_meat": {"type": "boolean"}},
+                         ["probe", "in_meat"])},
     {"name": "record_check",
      "description": "Store what a photo of the cook showed, as data points in a fixed vocabulary. Look at the photo "
                     "yourself, then call this; the photo is never stored. Checks and their fields: "
@@ -145,6 +152,8 @@ def _call(service: Service, name: str, a: dict):
         return service.smoke_test()
     if name == "log_step":
         return service.log_step(a.get("step", ""), a.get("note", ""))
+    if name == "set_probe":
+        return service.set_probe(a.get("probe"), bool(a.get("in_meat")))
     if name == "record_check":
         return service.record_check(a.get("check", ""), a.get("data"), a.get("verdict"), a.get("by", ""),
                                     a.get("note", ""))

@@ -130,6 +130,8 @@ def make_handler(service: Service):
                                                     body.get("probes") or body.get("probe"), body.get("probe_labels")))
                 if path == "/api/log":
                     return self._json(service.log_step(body.get("step", ""), body.get("note", "")))
+                if path == "/api/probe":
+                    return self._json(service.set_probe(body.get("probe"), body.get("in_meat", False)))
                 if path == "/api/check":
                     return self._json(service.record_check(body.get("check", ""), body.get("data"), body.get("verdict"),
                                                            body.get("by", ""), body.get("note", "")))

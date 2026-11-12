@@ -268,6 +268,86 @@ class EngineTests(Base):
         self.assertEqual(o["phase"], "resting")
         self.assertEqual(o["hold"]["floor_c"], 60.0)
 
+    def three_probe_cook(self):
+        meta = {"recipe_name": self.recipe.name, "weight_kg": 5.4, "probes": [1, 2, 3],
+                "probe_labels": {1: "flat", 2: "point"}, "serve_at": (START + timedelta(hours=30)).isoformat(),
+                "recipe": self.recipe.raw}
+        cook_id = self.store.open_cook(self.recipe.name, START, meta)
+        engine = Engine(self.recipe, self.store.meta(cook_id), self.store, self.notifier, cook_id)
+        engine.manual("meat-on", "", START)
+        return cook_id, engine
+
+    def test_probes_pulled_for_the_hold_stop_counting(self):
+        cook_id, engine = self.three_probe_cook()
+        rest = START + timedelta(hours=14)
+        engine.manual("rest", "", rest)
+        last = None
+        for i in range(0, 4 * 60 * 2):                        # four hours of hold, a reading every 30 s
+            t = rest + timedelta(seconds=30 * i)
+            m = 92.0 - 2.0 * (i / 120)                         # the probe left in cools 2 C an hour
+            pulled = i >= 20                                   # after 10 minutes two probes come out
+            # a pulled probe left plugged in falls to room temperature over a few minutes
+            room = max(29.0, 90.0 - (i - 20) * 9.0) if pulled else None
+            last = Reading(at=t, pit=None, probes=[round(m, 2), room if pulled else round(m + 3, 2),
+                                                   room if pulled else round(m + 1, 2)], connected=False)
+            engine.tick(last)
+        kinds = self.kinds(cook_id)
+        self.assertEqual(kinds.count("probe-out"), 2)
+        self.assertNotIn("hold-low", kinds)                    # the 29 C of the pulled probes never became "the meat"
+        self.assertEqual(sorted(engine.probes_out()), [2, 3])
+        self.assertAlmostEqual(engine.coldest(last), last.probes[0])
+        h = engine.hold_stats(last.at, last)
+        self.assertAlmostEqual(h["rate_c_per_h"], -2.0, delta=0.15)
+        self.assertGreater(h["min_c"], 80)
+        msg = next(e["message"] for e in self.store.events(cook_id) if e["event"] == "probe-out")
+        self.assertIn("looks pulled out", msg)
+        self.assertIn("Still in the meat: flat", msg)
+        checks = {c["name"]: c for c in engine.live_checks(last.at, last)}
+        self.assertIn("(from flat)", checks["hold-temperature"]["detail"])
+        o = engine.overview(last.at, last)
+        self.assertEqual([p["in_meat"] for p in o["probes"]], [True, False, False])
+
+    def test_a_probe_moved_during_the_cook_comes_back_by_itself(self):
+        cook_id, engine = self.three_probe_cook()
+        base = START + timedelta(hours=3)
+        def feed(minute, p2):
+            r = Reading(at=base + timedelta(minutes=minute), pit=121, probes=[55.0, p2, 56.0], fan=40)
+            engine.tick(r)
+            return r
+        for m in range(0, 5):
+            feed(m, 58.0)
+        feed(5, 45.0)                                          # pulled out to move it
+        self.assertEqual(sorted(engine.probes_out()), [2])
+        r = feed(6, 38.0)
+        self.assertEqual(engine.coldest(r), 55.0)
+        feed(7, 50.0)                                          # pushed back in, warming up again
+        self.assertEqual(sorted(engine.probes_out()), [2])     # not yet back where it was
+        r = feed(9, 56.5)
+        self.assertEqual(engine.probes_out(), {})
+        kinds = self.kinds(cook_id)
+        self.assertEqual((kinds.count("probe-out"), kinds.count("probe-in")), (1, 1))
+        # a probe dropped into the pit air reads far above the meat: it must not be taken back as meat
+        for m in range(10, 14):
+            feed(m, 56.5)
+        feed(14, 48.0)
+        self.assertEqual(sorted(engine.probes_out()), [2])
+        r = feed(16, 118.0)
+        self.assertEqual(sorted(engine.probes_out()), [2])
+        self.assertEqual(engine.coldest(r), 55.0)
+
+    def test_an_unplugged_probe_is_simply_not_counted(self):
+        cook_id, engine = self.three_probe_cook()
+        rest = START + timedelta(hours=14)
+        engine.manual("rest", "", rest)
+        r = None
+        for minute in range(0, 30):
+            r = Reading(at=rest + timedelta(minutes=minute), pit=None, probes=[None, 88.0 - minute * 0.03, None],
+                        connected=False)
+            engine.tick(r)
+        self.assertAlmostEqual(engine.coldest(r), r.probes[1])
+        self.assertNotIn("probe-lost", self.kinds(cook_id))
+        self.assertEqual({c["name"]: c["state"] for c in engine.live_checks(r.at, r)}["hold-temperature"], "pass")
+
     def test_status_text(self):
         cook_id, engine = self.open()
         engine.manual("meat-on", "", START)
