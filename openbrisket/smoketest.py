@@ -22,7 +22,7 @@ class Check:
     detail: str
 
 
-def run(recipe: Recipe, reading: Reading, recent: list, notifier: Notifier | None, probe_no: int = 1,
+def run(recipe: Recipe, reading: Reading, recent: list, notifier: Notifier | None, probe_no=1,
         now: datetime | None = None) -> list[Check]:
     """`recent` is the engine's raw history: [iso time, pit, fan] rows, oldest first."""
     now = now or reading.at
@@ -59,14 +59,18 @@ def run(recipe: Recipe, reading: Reading, recent: list, notifier: Notifier | Non
     else:
         checks.append(Check("fan", PASS, f"fan averaging {median(fans):.0f}%, with headroom"))
 
-    meat = reading.probe(probe_no)
-    if meat is None:
-        checks.append(Check("probes", FAIL, f"food probe {probe_no} is not reading: plug it in"))
-    elif meat > 45:
-        checks.append(Check("probes", FAIL, f"food probe {probe_no} reads {meat:.0f} C before the meat is on: is it "
+    numbers = list(probe_no) if isinstance(probe_no, (list, tuple)) else [probe_no]
+    values = {n: reading.probe(n) for n in numbers}
+    dead = [str(n) for n, v in values.items() if v is None]
+    hot = [f"{n} ({v:.0f} C)" for n, v in values.items() if v is not None and v > 45]
+    if dead:
+        checks.append(Check("probes", FAIL, f"food probe {', '.join(dead)} not reading: plug it in"))
+    elif hot:
+        checks.append(Check("probes", FAIL, f"food probe {', '.join(hot)} is hot before the meat is on: is it "
                                             f"lying in the pit?"))
     else:
-        checks.append(Check("probes", PASS, f"food probe {probe_no} reads {meat:.0f} C"))
+        checks.append(Check("probes", PASS, "food probe " + ", ".join(f"{n} reads {v:.0f} C"
+                                                                     for n, v in values.items())))
 
     checks.append(Check("clean-smoke", SKIP, "photo check not available yet: look for thin blue smoke, not thick white"))
     checks.append(_notify(notifier))

@@ -79,7 +79,7 @@ class ServiceTests(Base):
         st = self.service.status()["cook"]
         self.assertEqual(st["phase"], "cooking")
         self.assertEqual([p["state"] for p in st["pipeline"]][:3], ["failed", "done", "active"])     # the failed smoke test stays on the record
-        self.assertIn("meat-probe", [c["name"] for c in st["checks"]])
+        self.assertIn("meat-probes", [c["name"] for c in st["checks"]])
         self.assertIn("since meat on", self.service.status_text())
         with self.assertRaises(ServiceError):
             self.service.close(score=12)
@@ -93,6 +93,20 @@ class ServiceTests(Base):
         self.assertIn("post oak, two chunks", json.dumps(detail["events"]))
         with self.assertRaises(ServiceError):
             self.service.cook("../etc")
+
+    def test_probe_selection(self):
+        p = self.service._probes
+        self.assertEqual((p(None), p(2), p("1, 3,3"), p([4, "2", 4])), ([1], [2], [1, 3], [4, 2]))
+        for bad in ("x", [0], [10], "1,two"):
+            with self.assertRaises(ServiceError):
+                p(bad)
+        started = self.service.start("texas-brisket", 5.4, self.serve_at, [1, 2], {"1": " flat ", "3": "ignored"})
+        meta = self.service.store().meta(started["cook"])
+        self.assertEqual((meta["probes"], meta["probe_labels"]), ([1, 2], {1: "flat"}))
+        self.service.read_now()
+        probes = self.service.status()["cook"]["probes"]
+        self.assertEqual([(x["no"], x["label"]) for x in probes], [(1, "flat"), (2, "probe 2")])
+        self.assertEqual(self.service.cook(started["cook"])["meta"]["probes"][0], {"no": 1, "label": "flat"})
 
     def test_runner_ticks_the_open_cook(self):
         self.service.start("texas-brisket", 5.4, self.serve_at)
@@ -157,7 +171,10 @@ class McpTests(Base):
         err, text = self.tool("log_step", {"step": "meat-on"})
         self.assertTrue(err)
         self.assertEqual(text, "no cook is open")
-        err, text = self.tool("start_cook", {"recipe": "pork-ribs", "serve_at": self.serve_at})
+        err, text = self.tool("start_cook", {"recipe": "pork-ribs", "serve_at": self.serve_at, "probes": [0]})
+        self.assertTrue(err)
+        err, text = self.tool("start_cook", {"recipe": "pork-ribs", "serve_at": self.serve_at, "probes": [2, 3],
+                                             "probe_labels": {"2": "thick end"}})
         self.assertFalse(err)
         self.assertFalse(self.tool("log_step", {"step": "meat-on"})[0])
         err, text = self.tool("cook_status")
@@ -200,6 +217,8 @@ class HttpTests(Base):
         self.assertIn("default-src 'self'", headers["Content-Security-Policy"])
         self.assertEqual(self.req("/app.js", token=None)[0], 200)
         self.assertEqual(self.req("/app.css", token=None)[0], 200)
+        self.assertEqual(self.req("/theme.js", token=None)[0], 200)
+        self.assertIn(b'data-theme="light"', body)
         self.assertEqual(self.req("/healthz", token=None)[1]["ok"], True)
         self.assertEqual(self.req("/api/status", token=None)[0], 401)
         self.assertEqual(self.req("/api/status", token="wrong")[0], 401)

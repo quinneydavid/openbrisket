@@ -13,7 +13,7 @@ import yaml
 
 from . import notify, plan as planmod, recipes, settings, smoketest, sources
 from .cook import Engine
-from .store import Store
+from .store import MAX_PROBES, Store
 
 STEPS = ("meat-on", "wrap", "spritz", "rest", "note")
 
@@ -216,17 +216,43 @@ class Service:
             raise ServiceError("no cook is open")
         return e
 
-    def start(self, recipe_id: str, weight_kg: float | None, serve_at: str, probe: int = 1) -> dict:
+    @staticmethod
+    def _probes(probes) -> list[int]:
+        """Probe numbers from 1, [1, 2], "1,2" or None (default probe 1), checked and de-duplicated."""
+        if probes in (None, "", []):
+            probes = [1]
+        if isinstance(probes, str):
+            probes = [p for p in probes.replace(" ", "").split(",") if p]
+        if not isinstance(probes, (list, tuple)):
+            probes = [probes]
+        out: list[int] = []
+        for p in probes:
+            try:
+                n = int(p)
+            except (TypeError, ValueError):
+                raise ServiceError(f"'{p}' is not a probe number") from None
+            if not 1 <= n <= MAX_PROBES:
+                raise ServiceError(f"probe numbers run from 1 to {MAX_PROBES}")
+            if n not in out:
+                out.append(n)
+        return out
+
+    def start(self, recipe_id: str, weight_kg: float | None, serve_at: str, probes=None,
+              probe_labels: dict | None = None) -> dict:
         with self.lock:
             recipe = self._recipe(recipe_id)
             serve = when(serve_at)
+            numbers = self._probes(probes)
+            labels = {n: str(v).strip()[:24] for n, v in ((int(k), v) for k, v in (probe_labels or {}).items())
+                      if n in numbers and str(v).strip()}
             try:
                 p = planmod.make_plan(recipe, weight_kg, serve)
             except recipes.RecipeError as e:
                 raise ServiceError(str(e)) from None
             meta = {
                 "recipe_name": recipe.name, "recipe_version": recipe.version, "recipe_path": recipe.path,
-                "weight_kg": weight_kg, "serve_at": serve.isoformat(timespec="seconds"), "probe": int(probe),
+                "weight_kg": weight_kg, "serve_at": serve.isoformat(timespec="seconds"), "probes": numbers,
+                "probe_labels": labels,
                 "plan": [{"at": s.at.isoformat(timespec="minutes"), "step": s.what} for s in p.steps],
                 "recipe": recipe.raw,
             }
@@ -258,7 +284,7 @@ class Service:
             r = self.read_now()
             if r is None:
                 r = sources.Reading(at=_now(), connected=False)
-            checks = smoketest.run(e.recipe, r, e.state.get("recent", []), e.notifier, e.probe_no)
+            checks = smoketest.run(e.recipe, r, e.state.get("recent", []), e.notifier, e.probe_nos)
             ok = smoketest.passed(checks)
             e.store.add_event(e.cook_id, r.at, "smoke-test", "smoke test " + ("passed" if ok else "failed"),
                               {c.name: c.result for c in checks})
@@ -339,15 +365,21 @@ class Service:
             with open(path, newline="", encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
             stride = max(1, len(rows) // max_points)
-            probe = f"probe{int(m.get('probe', 1))}"
+            numbers = [int(n) for n in (m.get("probes") or [m.get("probe", 1)])]
             for row in rows[::stride] + (rows[-1:] if stride > 1 else []):
                 def num(key):
                     try:
                         return float(row.get(key) or "")
                     except ValueError:
                         return None
-                curve.append({"at": row["at"], "pit_c": num("pit"), "meat_c": num(probe), "fan_pct": num("fan")})
+                probes = {str(n): num(f"probe{n}") for n in numbers}
+                present = [v for v in probes.values() if v is not None]
+                curve.append({"at": row["at"], "pit_c": num("pit"), "meat_c": min(present) if present else None,
+                              "probes_c": probes, "fan_pct": num("fan")})
         meta = {k: v for k, v in m.items() if k != "recipe"}
+        numbers = [int(n) for n in (m.get("probes") or [m.get("probe", 1)])]
+        labels = {int(k): v for k, v in (m.get("probe_labels") or {}).items()}
+        meta["probes"] = [{"no": n, "label": labels.get(n) or f"probe {n}"} for n in numbers]
         return {"meta": meta, "events": store.events(cook_id), "curve": curve}
 
     # --- background runner ------------------------------------------------------------------------

@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>OpenBrisket</title>
+<script src="theme.js"></script>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -12,7 +13,12 @@
   <div class="wrap top-row">
     <a class="brand" href="#cook"><span class="mark" aria-hidden="true"></span>OpenBrisket</a>
     <span class="tagline">PitOps for your smoker</span>
-    <span class="live" id="live" hidden></span>
+    <span class="spacer live" id="live" hidden></span>
+    <span class="seg" id="theme" role="group" aria-label="Theme">
+      <button type="button" data-theme-set="light">Light</button>
+      <button type="button" data-theme-set="dark">Dark</button>
+      <button type="button" data-theme-set="auto">Auto</button>
+    </span>
   </div>
   <nav class="wrap tabs" id="tabs" aria-label="Sections">
     <a href="#cook" data-tab="cook">Cook</a>

@@ -70,7 +70,8 @@ def cmd_apply(args) -> int:
     store = _store(cfg)
     meta = {
         "recipe_name": recipe.name, "recipe_version": recipe.version, "recipe_path": recipe.path,
-        "weight_kg": args.weight, "serve_at": serve.isoformat(timespec="seconds"), "probe": args.probe,
+        "weight_kg": args.weight, "serve_at": serve.isoformat(timespec="seconds"),
+        "probes": [int(p) for p in str(args.probe).split(",") if p.strip()],
         "plan": [{"at": s.at.isoformat(timespec="minutes"), "step": s.what} for s in the_plan.steps],
         "recipe": recipe.raw,
     }
@@ -124,7 +125,7 @@ def cmd_smoke_test(args) -> int:
         print(f"source: {e}", file=sys.stderr)
         reading = sources.Reading(at=_now(), connected=False)
     checks = smoketest.run(engine.recipe, reading, engine.state.get("recent", []), engine.notifier,
-                           engine.probe_no)
+                           engine.probe_nos)
     print(smoketest.render(checks))
     ok = smoketest.passed(checks)
     store.add_event(cook_id, reading.at, "smoke-test", "smoke test " + ("passed" if ok else "failed"),
@@ -211,7 +212,7 @@ def main(argv=None) -> int:
         p.add_argument("--weight", type=float, help="raw weight in kg")
         p.add_argument("--serve", required=True, help="serving time, e.g. '2026-11-14 18:00'")
         if name == "apply":
-            p.add_argument("--probe", type=int, default=1, help="which food probe is in the meat (default 1)")
+            p.add_argument("--probe", default="1", help="food probes in the meat, e.g. 1 or 1,2,3 (default 1)")
         p.set_defaults(fn=fn)
 
     p = sub.add_parser("run", help="follow the open cook: read, detect, leave notes")

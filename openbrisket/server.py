@@ -18,6 +18,7 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 MAX_BODY = 256 * 1024
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+          "/theme.js": ("theme.js", "text/javascript; charset=utf-8"),
           "/app.css": ("app.css", "text/css; charset=utf-8")}
 
 
@@ -113,7 +114,7 @@ def make_handler(service: Service):
                     return self._json(service.plan(body.get("recipe"), body.get("weight_kg"), body.get("serve_at")))
                 if path == "/api/cooks":
                     return self._json(service.start(body.get("recipe"), body.get("weight_kg"), body.get("serve_at"),
-                                                    body.get("probe") or 1))
+                                                    body.get("probes") or body.get("probe"), body.get("probe_labels")))
                 if path == "/api/log":
                     return self._json(service.log_step(body.get("step", ""), body.get("note", "")))
                 if path == "/api/smoke-test":

@@ -77,7 +77,7 @@ class EngineTests(Base):
         self.assertTrue(any("CHECK: stall detected" in m for m in self.notifier.sent))
         with open(os.path.join(self.store.dir(cook_id), "curve.csv")) as f:
             rows = f.read().splitlines()
-        self.assertEqual(rows[0], "at,pit,probe1,probe2,probe3,fan,pit_target")
+        self.assertEqual(rows[0], "at,pit," + ",".join(f"probe{n}" for n in range(1, 10)) + ",fan,pit_target")
         self.assertGreater(len(rows), 600)        # one a minute over a 14 h cook
 
     def test_state_survives_a_restart(self):
@@ -150,6 +150,40 @@ class EngineTests(Base):
         self.assertEqual(kinds.count("rest-min"), 1)
         self.assertEqual(kinds.count("rest-ideal"), 1)
 
+    def test_several_probes_the_coldest_one_governs(self):
+        meta = {"recipe_name": self.recipe.name, "weight_kg": 5.4, "probes": [1, 2, 4],
+                "probe_labels": {1: "flat", 2: "point"}, "serve_at": (START + timedelta(hours=24)).isoformat(),
+                "recipe": self.recipe.raw}
+        cook_id = self.store.open_cook(self.recipe.name, START, meta)
+        engine = Engine(self.recipe, self.store.meta(cook_id), self.store, self.notifier, cook_id)
+        self.assertEqual(engine.probe_nos, [1, 2, 4])
+        engine.manual("meat-on", "", START)
+        last = None
+        for r in cook_readings(engine.prior, step_s=60, hours=13.0):
+            m = r.probes[0]
+            # probe 1 (flat) is the coldest; point runs 6 C ahead, probe 4 3 C ahead; probe 3 is not in the meat
+            r.probes = [m, m + 6, 150.0, m + 3]
+            engine.tick(r)
+            last = r
+        self.assertEqual(engine.coldest(last), last.probes[0])
+        self.assertNotIn("target", self.kinds(cook_id))          # the point passed 95 C, the flat has not
+        self.assertGreater(last.probes[1], 95)
+        self.assertLess(last.probes[0], 95)
+        o = engine.overview(last.at, last)
+        self.assertEqual([p["label"] for p in o["probes"]], ["flat", "point", "probe 4"])
+        self.assertEqual(o["meat_c"], last.probes[0])
+        check = next(c for c in o["checks"] if c["name"] == "meat-probes")
+        self.assertEqual(check["state"], "pass")
+        self.assertIn("3 probes", check["detail"])
+        self.assertIn("coldest of flat", engine.status(last.at, last))
+        last.probes = [last.probes[0], None, 150.0, last.probes[3]]
+        check = next(c for c in engine.live_checks(last.at, last) if c["name"] == "meat-probes")
+        self.assertEqual((check["state"], check["detail"]), ("fail", "not reading: point"))
+        self.assertEqual(engine.coldest(last), last.probes[0])   # the others still carry the cook
+        with open(os.path.join(self.store.dir(cook_id), "curve.csv")) as f:
+            header, row = f.readline().strip().split(","), f.readline().strip().split(",")
+        self.assertEqual(row[header.index("probe3")], "150.0")   # every probe is recorded, in the meat or not
+
     def test_status_text(self):
         cook_id, engine = self.open()
         engine.manual("meat-on", "", START)
@@ -185,6 +219,16 @@ class SmokeTestTests(Base):
         self.assertEqual(got["probes"], "fail")
         short = smoketest.run(self.recipe, r, self.recent(120, minutes=3), None, now=START + timedelta(minutes=3))
         self.assertIn("history", {c.name: c.detail for c in short}["pit-stable"])
+
+    def test_every_meat_probe_is_checked(self):
+        now = START + timedelta(minutes=16)
+        r = Reading(at=now, pit=120, probes=[26, None, 25, 90], fan=40)
+        ok = {c.name: c for c in smoketest.run(self.recipe, r, self.recent(120), None, [1, 3], now=now)}
+        self.assertEqual(ok["probes"].result, "pass")
+        dead = {c.name: c for c in smoketest.run(self.recipe, r, self.recent(120), None, [1, 2], now=now)}
+        self.assertEqual((dead["probes"].result, "2 not reading" in dead["probes"].detail), ("fail", True))
+        hot = {c.name: c for c in smoketest.run(self.recipe, r, self.recent(120), None, [1, 4], now=now)}
+        self.assertIn("4 (90 C) is hot", hot["probes"].detail)
 
     def test_no_feed(self):
         checks = smoketest.run(self.recipe, Reading(at=START, connected=False), [], None)

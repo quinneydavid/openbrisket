@@ -32,6 +32,8 @@ function s(tag, attrs, ...kids) {
   for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   return el;
 }
+const only = (...nodes) => nodes.flat(Infinity).filter((n) => n !== null && n !== undefined && n !== false);
+function show(...nodes) { main.replaceChildren(...only(nodes)); }
 async function api(path, body) {
   const opt = { headers: { Authorization: "Bearer " + (token || "") } };
   if (body !== undefined) {
@@ -86,19 +88,28 @@ function niceStep(range, target) {
   for (const m of [1, 2, 2.5, 5, 10]) if (raw <= m * pow) return m * pow;
   return 10 * pow;
 }
+const cap = (t) => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+function seriesFor(opts) {
+  // Pit is always the first colour; each probe in the meat takes the next one, in order, never reshuffled.
+  const probes = (opts.probes && opts.probes.length ? opts.probes : [{ no: null, label: "Meat" }]).slice(0, 6);
+  return [{ cls: "s0", name: "Pit", digits: 0, get: (p) => p.pit_c }].concat(probes.map((pr, i) => ({
+    cls: "s" + (i + 1), name: cap(pr.label), digits: 1, meat: true,
+    get: (p) => pr.no === null ? p.meat_c : (p.probes_c ? p.probes_c[pr.no] : null) ?? null })));
+}
 function drawChart(host, curve, opts) {
   host.replaceChildren();
-  const pts = curve.filter((p) => p.pit_c !== null || p.meat_c !== null).map((p) => ({ ...p, t: new Date(p.at).getTime() }));
+  const series = seriesFor(opts);
+  const pts = curve.map((p) => ({ ...p, t: new Date(p.at).getTime() })).filter((p) => series.some((q) => q.get(p) !== null && q.get(p) !== undefined));
   if (pts.length < 2) {
     host.append(h("div", { class: "empty" }, "The curve appears here once the meat is on and a few minutes have passed."));
     return;
   }
-  const W = Math.max(320, host.clientWidth - 28), H = 280, FH = 84;
-  const m = { l: 40, r: 84, t: 12, b: 24 };
+  const W = Math.max(320, host.clientWidth - 32), H = 280, FH = 84;
+  const m = { l: 40, r: 92, t: 12, b: 24 };
   const t0 = pts[0].t;
   const proj = opts.projection;                     // {t, value} or null
   const t1 = Math.max(pts[pts.length - 1].t, proj ? proj.t : 0);
-  const hi = Math.max(...pts.map((p) => Math.max(p.pit_c ?? 0, p.meat_c ?? 0)), opts.pitTarget || 0, opts.meatTarget || 0);
+  const hi = Math.max(...pts.flatMap((p) => series.map((q) => q.get(p) ?? 0)), opts.pitTarget || 0, opts.meatTarget || 0);
   const step = niceStep(hi, 5);
   const yMax = Math.ceil((hi + 4) / step) * step;
   const x = (t) => m.l + (t - t0) / Math.max(1, t1 - t0) * (W - m.l - m.r);
@@ -127,31 +138,31 @@ function drawChart(host, curve, opts) {
   if (opts.meatTarget) refs.push([opts.meatTarget, "target " + opts.meatTarget.toFixed(0)]);
   for (const [v] of refs) svg.append(s("line", { class: "ref", x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
 
-  const path = (key) => {
-    let d = "", pen = false;
-    for (const p of pts) {
-      if (p[key] === null) { pen = false; continue; }
-      d += (pen ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p[key]).toFixed(1);
-      pen = true;
-    }
-    return d;
-  };
   const ends = [];
-  for (const [key, cls, name] of [["pit_c", "pit", "Pit"], ["meat_c", "meat", "Meat"]]) {
-    const last = [...pts].reverse().find((p) => p[key] !== null);
-    if (!last) continue;
-    svg.append(s("path", { class: "line " + cls, d: path(key) }));
-    if (key === "meat_c" && proj && proj.t > last.t) {
-      svg.append(s("line", { class: "line meat proj", x1: x(last.t), y1: y(last.meat_c), x2: x(proj.t), y2: y(proj.value) }));
+  for (const q of series) {
+    let d = "", pen = false, last = null;
+    for (const p of pts) {
+      const v = q.get(p);
+      if (v === null || v === undefined) { pen = false; continue; }
+      d += (pen ? "L" : "M") + x(p.t).toFixed(1) + " " + y(v).toFixed(1);
+      pen = true; last = { t: p.t, v };
     }
-    svg.append(s("circle", { class: "end " + cls, cx: x(last.t), cy: y(last[key]), r: 4.5 }));
-    ends.push({ yy: y(last[key]), xx: x(last.t), text: name + " " + last[key].toFixed(0) });
+    if (!last) continue;
+    svg.append(s("path", { class: "line " + q.cls, d }));
+    ends.push({ q, last, yy: y(last.v), xx: x(last.t), text: q.name + " " + last.v.toFixed(0) });
   }
-  ends.sort((a, b) => a.yy - b.yy);
-  if (ends.length === 2 && ends[1].yy - ends[0].yy < 14) { ends[0].yy -= 7; ends[1].yy += 7; }
-  for (const e of ends) svg.append(s("text", { class: "end-label", x: Math.min(e.xx + 9, W - m.r + 6), y: e.yy + 4 }, e.text));
+  // Direct labels are sparing: the pit, and the meat probes when there are few; with many, only the coldest.
+  const meatEnds = ends.filter((e) => e.q.meat);
+  const coldest = meatEnds.reduce((a, b) => (a && a.last.v <= b.last.v ? a : b), null);
+  if (coldest && proj && proj.t > coldest.last.t) {
+    svg.append(s("line", { class: "line proj " + coldest.q.cls, x1: coldest.xx, y1: coldest.yy, x2: x(proj.t), y2: y(proj.value) }));
+  }
+  for (const e of ends) svg.append(s("circle", { class: "end " + e.q.cls, cx: e.xx, cy: e.yy, r: 4.5 }));
+  const labelled = ends.filter((e) => !e.q.meat || meatEnds.length <= 3 || e === coldest).sort((a, b) => a.yy - b.yy);
+  for (let i = 1; i < labelled.length; i++) if (labelled[i].yy - labelled[i - 1].yy < 13) labelled[i].yy = labelled[i - 1].yy + 13;
+  for (const e of labelled) svg.append(s("text", { class: "end-label", x: Math.min(e.xx + 9, W - m.r + 6), y: e.yy + 4 }, e.text));
   for (const [v, label] of refs) {
-    if (ends.some((e) => Math.abs(e.yy - y(v)) < 12 && e.xx > W - m.r - 40)) continue;
+    if (labelled.some((e) => Math.abs(e.yy - y(v)) < 12 && e.xx > W - m.r - 40)) continue;
     svg.append(s("text", { class: "ref-label", x: W - m.r + 6, y: y(v) + 4 }, label));
   }
   const cross = s("line", { class: "cross", y1: m.t, y2: H - m.b, visibility: "hidden" });
@@ -185,8 +196,8 @@ function drawChart(host, curve, opts) {
     for (const p of pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
     for (const c of [cross, fcross]) if (c) { c.setAttribute("x1", x(best.t)); c.setAttribute("x2", x(best.t)); c.setAttribute("visibility", "visible"); }
     const row = (cls, name, value) => h("div", { class: "r" }, h("span", { class: "sw " + cls }), name, h("span", { class: "num" }, value));
-    tip.replaceChildren(h("b", {}, dayClock(best.at)), row("pit", "Pit", deg(best.pit_c)), row("meat", "Meat", deg(best.meat_c, 1)),
-      best.fan_pct !== null ? row("fan", "Fan", best.fan_pct.toFixed(0) + "%") : null);
+    tip.replaceChildren(...only(h("b", {}, dayClock(best.at)), series.map((q) => row(q.cls, q.name, deg(q.get(best) ?? null, q.digits))),
+      best.fan_pct !== null ? row("fan", "Fan", best.fan_pct.toFixed(0) + "%") : null));
     tip.hidden = false;
     const tw = tip.offsetWidth;
     tip.style.left = Math.min(window.innerWidth - tw - 8, Math.max(8, ev.clientX + 14)) + "px";
@@ -197,7 +208,8 @@ function drawChart(host, curve, opts) {
   host.append(svg);
   if (fsvg) host.append(fsvg);
 }
-function curveTable(curve) {
+function curveTable(curve, opts) {
+  const series = seriesFor(opts);
   const rows = [];
   let next = 0;
   for (const p of curve) {
@@ -205,17 +217,19 @@ function curveTable(curve) {
     if (t >= next) { rows.push(p); next = t + 30 * 60000; }
   }
   if (curve.length && rows[rows.length - 1] !== curve[curve.length - 1]) rows.push(curve[curve.length - 1]);
+  const cell = (v, digits) => (v === null || v === undefined) ? "–" : v.toFixed(digits);
   return h("details", {}, h("summary", {}, "Data table (every 30 minutes)"), h("div", { class: "scroll" },
-    h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Time"), h("th", {}, "Pit °C"), h("th", {}, "Meat °C"), h("th", {}, "Fan %"))),
-      h("tbody", {}, rows.map((p) => h("tr", {}, h("td", {}, dayClock(p.at)), h("td", {}, p.pit_c === null ? "–" : p.pit_c.toFixed(0)),
-        h("td", {}, p.meat_c === null ? "–" : p.meat_c.toFixed(1)), h("td", {}, p.fan_pct === null ? "–" : p.fan_pct.toFixed(0))))))));
+    h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Time"), series.map((q) => h("th", {}, q.name + " °C")), h("th", {}, "Fan %"))),
+      h("tbody", {}, rows.map((p) => h("tr", {}, h("td", {}, dayClock(p.at)), series.map((q) => h("td", {}, cell(q.get(p), q.digits))),
+        h("td", {}, cell(p.fan_pct, 0))))))));
 }
 function chartBox(curve, opts, title) {
   const host = h("div", { class: "chart" });
-  const legend = h("div", { class: "legend" }, h("span", {}, h("span", { class: "sw pit" }), "Pit"), h("span", {}, h("span", { class: "sw meat" }), "Meat"),
+  const series = seriesFor(opts);
+  const legend = h("div", { class: "legend" }, series.map((q) => h("span", {}, h("span", { class: "sw " + q.cls }), q.name)),
     opts.stall ? h("span", {}, h("span", { class: "sw band" }), "Stall band") : null,
     curve.some((p) => p.fan_pct !== null) ? h("span", {}, h("span", { class: "sw fan" }), "Fan (lower chart, %)") : null);
-  const el = box(title || "Temperature", legend, host, curve.length > 1 ? curveTable(curve) : null);
+  const el = box(title || "Temperature", legend, host, curve.length > 1 ? curveTable(curve, opts) : null);
   requestAnimationFrame(() => drawChart(host, curve, opts));
   el._redraw = () => drawChart(host, curve, opts);
   return el;
@@ -224,7 +238,7 @@ function eventLog(events) {
   const list = [...events].reverse();
   if (!list.length) return h("div", { class: "empty" }, "Nothing logged yet.");
   return h("ul", { class: "rows" }, list.map((e) => h("li", {}, h("span", { class: "time" }, dayClock(e.at)),
-    h("span", { class: "detail" }, e.message), h("span", { class: "kind" }, e.event))));
+    h("span", { class: "msgtext" }, e.message), h("span", { class: "kind" }, e.event))));
 }
 
 // ------------------------------------------------------------------------------------------ views
@@ -239,7 +253,7 @@ function loginView() {
     h("p", { class: "sub" }, "OpenBrisket prints its access token when it starts (look at the container log). Paste it here once; this browser remembers it."),
     h("div", { class: "fields" }, h("div", {}, h("label", { for: "tok" }, "Token"), input)),
     h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Open"))));
-  main.replaceChildren(form);
+  show(form);
   input.focus();
 }
 
@@ -248,10 +262,23 @@ function startForm(recipes, reading) {
   const sel = h("select", { id: "f-recipe" }, valid.map((r) => h("option", { value: r.id }, `${r.name} v${r.version}`)));
   const weight = h("input", { id: "f-weight", type: "number", step: "0.1", min: "0.1", inputmode: "decimal", placeholder: "5.4" });
   const serve = h("input", { id: "f-serve", type: "datetime-local", required: true });
-  const probe = h("select", { id: "f-probe" }, [1, 2, 3].map((n) => h("option", { value: n }, "Probe " + n)));
+  const live = reading && reading.probes_c && reading.probes_c.length ? reading.probes_c : [null, null, null];
+  const picks = live.map((temp, i) => {
+    const no = i + 1;
+    const box = h("input", { type: "checkbox", id: "f-probe-" + no, checked: no === 1 });
+    const name = h("input", { type: "text", id: "f-probe-name-" + no, placeholder: "name, e.g. flat", "aria-label": `Name for probe ${no}`, maxlength: "24" });
+    return { no, box, name, row: h("div", { class: "row" }, h("label", { for: "f-probe-" + no }, box, "Probe " + no),
+      h("span", { class: "num muted" }, temp === null || temp === undefined ? "no reading" : deg(temp, 1)), name) };
+  });
   const out = h("div", {});
-  const body = () => ({ recipe: sel.value, weight_kg: weight.value ? Number(weight.value) : null, serve_at: serve.value, probe: Number(probe.value) });
-  const hint = h("p", { class: "sub" });
+  const body = () => {
+    const chosen = picks.filter((p) => p.box.checked);
+    const labels = {};
+    for (const p of chosen) if (p.name.value.trim()) labels[p.no] = p.name.value.trim();
+    return { recipe: sel.value, weight_kg: weight.value ? Number(weight.value) : null, serve_at: serve.value,
+      probes: chosen.map((p) => p.no), probe_labels: labels };
+  };
+  const hint = h("p", { class: "hint" });
   const sync = () => {
     const r = valid.find((x) => x.id === sel.value);
     hint.textContent = r ? `${r.description} Pit ${r.pit_target_c} °C, meat to ${r.meat_target_c} °C. ` +
@@ -265,8 +292,9 @@ function startForm(recipes, reading) {
       h("div", {}, h("label", { for: "f-recipe" }, "Recipe"), sel),
       h("div", {}, h("label", { for: "f-weight" }, "Raw weight, kg"), weight),
       h("div", {}, h("label", { for: "f-serve" }, "Serving time"), serve),
-      h("div", {}, h("label", { for: "f-probe" }, "Probe in the meat"), probe)),
-    hint,
+      h("div", { class: "field-wide" }, hint),
+      h("div", { class: "field-wide" }, h("label", {}, "Probes in the meat"), h("div", { class: "probe-pick" }, picks.map((p) => p.row)),
+        h("p", { class: "hint" }, "Tick every probe that goes in the meat. With several, the coldest one decides when it is done, so put one in the thickest part."))),
     h("div", { class: "actions" },
       h("button", { type: "button", onclick: (ev) => act(ev.target, async () => {
         const p = await api("/api/plan", body()); out.replaceChildren(h("pre", {}, p.text)); }) }, "Plan"),
@@ -280,7 +308,7 @@ function cookView(st, detail) {
   const r = st.reading;
   const t = c.targets;
   const size = c.weight_kg ? `${c.weight_kg} kg` : "sized by time";
-  const head = h("div", {}, h("div", { class: "title-row" }, h("h1", {}, `${c.recipe} `, h("span", { class: "muted" }, `v${c.recipe_version}`)),
+  const head = h("div", {}, h("div", { class: "title-row" }, h("h1", {}, h("b", {}, c.recipe), " ", h("span", { class: "muted" }, `v${c.recipe_version}`)),
     h("span", { class: "badge open" }, "Open"), h("span", { class: "badge" }, c.phase + (c.wrapped ? ", wrapped" : ""))),
     h("p", { class: "sub mono" }, `${c.id} · ${c.cut} · ${size}` + (c.serve_at ? ` · serving ${dayClock(c.serve_at)}` : "")));
 
@@ -293,8 +321,11 @@ function cookView(st, detail) {
   const tiles = h("div", { class: "tiles" },
     h("div", { class: "tile" }, h("div", { class: "k" }, "Pit"), h("div", { class: "v" }, r && r.pit_c !== null ? r.pit_c.toFixed(0) : "–", h("small", {}, " °C")),
       h("div", { class: "d" }, `recipe ${t.pit_c} ± ${t.pit_tolerance_c}`)),
-    h("div", { class: "tile" }, h("div", { class: "k" }, `Meat (probe ${c.probe})`), h("div", { class: "v" }, c.meat_c !== null && c.meat_c !== undefined ? c.meat_c.toFixed(1) : "–", h("small", {}, " °C")),
-      h("div", { class: "d" }, `target ${t.meat_c}`)),
+    h("div", { class: "tile" }, h("div", { class: "k" }, c.probes.length > 1 ? `Meat (coldest of ${c.probes.length})` : `Meat (${c.probes[0].label})`),
+      h("div", { class: "v" }, c.meat_c !== null && c.meat_c !== undefined ? c.meat_c.toFixed(1) : "–", h("small", {}, " °C")),
+      h("div", { class: "d" }, `target ${t.meat_c}`),
+      c.probes.length > 1 ? h("ul", { class: "probes" }, c.probes.slice(0, 6).map((p, i) => h("li", {}, h("span", { class: "sw s" + (i + 1) }), cap(p.label),
+        h("span", { class: "num" }, deg(p.temp_c, 1))))) : null),
     h("div", { class: "tile" }, h("div", { class: "k" }, "Fan"), h("div", { class: "v" }, r && r.fan_pct !== null ? r.fan_pct.toFixed(0) : "–", h("small", {}, " %")),
       h("div", { class: "d" }, r && r.pit_target_c ? `controller set to ${r.pit_target_c.toFixed(0)} °C` : "")),
     h("div", { class: "tile" }, h("div", { class: "k" }, "Off the pit"), h("div", { class: "v" }, est && est.off_at ? clock(est.off_at) : "–"),
@@ -302,7 +333,8 @@ function cookView(st, detail) {
         (est.data_weight ? `, ${Math.round(est.data_weight * 100)}% from this cook` : ", from the recipe") : "estimate after the meat is on")));
 
   const proj = est && est.off_at ? { t: new Date(est.off_at).getTime(), value: t.meat_c } : null;
-  const chart = chartBox(detail.curve, { pitTarget: t.pit_c, meatTarget: t.meat_c, stall: [t.stall_from_c, t.stall_to_c], projection: proj });
+  const chart = chartBox(detail.curve, { pitTarget: t.pit_c, meatTarget: t.meat_c, stall: [t.stall_from_c, t.stall_to_c], projection: proj,
+    probes: c.probes.map((p) => ({ no: p.no, label: p.label })) });
 
   const checks = box("Checks", h("ul", { class: "rows" }, c.checks.map((k) => h("li", {}, stateCell(k.state), h("span", { class: "name" }, k.name), h("span", { class: "detail" }, k.detail)))));
 
@@ -338,7 +370,7 @@ function cookView(st, detail) {
         await api("/api/close", { abandon: true, notes: notes.value }); location.hash = "#history"; }); } }, "Abandon"))));
 
   const log = box("Commits", eventLog(detail.events));
-  main.replaceChildren(head, box(null, pipe), tiles, h("div", { class: "grid two" }, h("div", {}, chart, log), h("div", {}, checks, actions, close)));
+  show(head, box(null, pipe), tiles, h("div", { class: "grid two" }, h("div", {}, chart, log), h("div", {}, checks, actions, close)));
   main._chart = chart;
 }
 
@@ -350,7 +382,7 @@ async function renderCook(force) {
   if (!st.cook) {
     const recipes = await api("/api/recipes");
     if (!force && main.querySelector("#f-recipe")) return;      // do not wipe a form being filled in
-    main.replaceChildren(h("h1", {}, "No cook is open"),
+    show(h("h1", {}, "No cook is open"),
       st.source_error ? msg("No readings: " + st.source_error + " Check Settings.", "err") : null,
       startForm(recipes, st.reading));
     return;
@@ -363,14 +395,14 @@ async function renderCook(force) {
   const typing = active && main.contains(active) && ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName);
   if (typing && !force) return;                                  // do not redraw under someone typing
   const keep = {};
-  main.querySelectorAll("input[id]").forEach((i) => { keep[i.id] = i.value; });
+  main.querySelectorAll("input[id]:not([type=checkbox])").forEach((i) => { keep[i.id] = i.value; });
   cookView(st, lastCurve.data);
   for (const [id, v] of Object.entries(keep)) { const el = document.getElementById(id); if (el && v) el.value = v; }
 }
 
 async function renderRecipes() {
   const recipes = await api("/api/recipes");
-  main.replaceChildren(h("h1", {}, "Recipes"), h("p", { class: "sub" }, "Recipes are files. To change one, edit the file and send a pull request."),
+  show(h("h1", {}, "Recipes"), h("p", { class: "sub" }, "Recipes are files. To change one, edit the file and send a pull request."),
     recipes.map((r) => !r.valid ? box(r.id, h("div", { class: "body" }, msg(r.error, "err"))) :
       box(h("div", { class: "title-row" }, h("h2", {}, r.name), h("span", { class: "badge" }, "v" + r.version), h("span", { class: "muted mono" }, r.cut)),
         h("div", { class: "body" }, h("p", { class: "sub" }, r.description),
@@ -404,19 +436,19 @@ async function renderHistory(id) {
   if (id) {
     const d = await api("/api/cooks/" + encodeURIComponent(id));
     const m = d.meta, res = m.result || {};
-    main.replaceChildren(h("p", { class: "sub" }, h("a", { href: "#history" }, "← History")),
-      h("div", { class: "title-row" }, h("h1", {}, m.id), h("span", { class: "badge " + m.status }, m.status === "done" ? "Merged" : m.status === "open" ? "Open" : "Abandoned")),
+    show(h("p", { class: "sub" }, h("a", { href: "#history" }, "← History")),
+      h("div", { class: "title-row" }, h("h1", {}, h("b", {}, m.id)), h("span", { class: "badge " + m.status }, m.status === "done" ? "Merged" : m.status === "open" ? "Open" : "Abandoned")),
       h("p", { class: "sub mono" }, `${m.recipe_name} v${m.recipe_version}` + (m.weight_kg ? ` · ${m.weight_kg} kg` : "") + ` · opened ${fullDate(m.opened_at)}`),
       box("Result", h("div", { class: "body" }, h("dl", { class: "kv" },
         h("dt", {}, "Score"), h("dd", {}, res.score !== undefined ? `${res.score} / 10` : "–"),
         h("dt", {}, "Yield"), h("dd", {}, res.yield ? `${Math.round(res.yield * 100)}% (${res.cooked_weight_kg} kg cooked)` : "–"),
         h("dt", {}, "Notes"), h("dd", {}, res.notes || "–"),
         h("dt", {}, "Closed"), h("dd", {}, m.closed_at ? fullDate(m.closed_at) : "–")))),
-      chartBox(d.curve, {}, "Temperature"), box(`Commits (${d.events.length})`, eventLog(d.events)));
+      chartBox(d.curve, { probes: m.probes }, "Temperature"), box(`Commits (${d.events.length})`, eventLog(d.events)));
     return;
   }
   const cooks = await api("/api/cooks");
-  main.replaceChildren(h("h1", {}, "History"), cookGraph(cooks),
+  show(h("h1", {}, "History"), cookGraph(cooks),
     box("Cooks", cooks.length ? h("div", { class: "list" }, cooks.map((c) => h("a", { href: "#history/" + encodeURIComponent(c.id) },
       h("span", { class: "badge " + c.status }, c.status === "done" ? "Merged" : c.status === "open" ? "Open" : "Abandoned"),
       h("span", { class: "id" }, c.id),
@@ -434,16 +466,18 @@ async function renderSettings() {
   const save = (ev) => act(ev.target, async () => {
     await api("/api/settings", {
       source: { type: "homeassistant", url: val("s-url"), token: val("s-token"),
-        entities: { pit: val("s-pit"), probes: [val("s-p1"), val("s-p2"), val("s-p3")], fan: val("s-fan"), fan_on: val("s-fanon"), pit_target: val("s-target"), connected: val("s-conn") } },
+        entities: { pit: val("s-pit"), probes: val("s-probes").split(/\s+/).filter(Boolean).slice(0, 9), fan: val("s-fan"), fan_on: val("s-fanon"), pit_target: val("s-target"), connected: val("s-conn") } },
       telegram: { bot_token: val("s-bot"), chat_id: val("s-chat") }, poll_seconds: Number(val("s-poll")) || 15 });
     return "Saved.";
   });
-  main.replaceChildren(h("h1", {}, "Settings"),
+  show(h("h1", {}, "Settings"),
     box("Readings: Home Assistant", h("div", { class: "body" }, h("div", { class: "fields" },
       f("s-url", "Home Assistant address", v.source.url, { placeholder: "http://homeassistant.local:8123" }),
       f("s-token", "Long-lived access token", "", { type: "password", placeholder: v.source.token_set ? "saved; leave empty to keep" : "not set" }),
       f("s-pit", "Pit temperature entity", e.pit), f("s-conn", "Connected entity", e.connected),
-      f("s-p1", "Food probe 1 entity", (e.probes || [])[0]), f("s-p2", "Food probe 2 entity", (e.probes || [])[1]), f("s-p3", "Food probe 3 entity", (e.probes || [])[2]),
+      h("div", { class: "field-wide" }, h("label", { for: "s-probes" }, "Food probe entities, one per line (up to 9)"),
+        h("textarea", { id: "s-probes", rows: "6", spellcheck: "false" }, (e.probes || []).join("\n")),
+        h("p", { class: "hint" }, "The order here is the probe number: the first line is probe 1.")),
       f("s-fan", "Fan output entity", e.fan), f("s-fanon", "Fan switched on entity", e.fan_on), f("s-target", "Pit target entity", e.pit_target),
       f("s-poll", "Seconds between readings", v.poll_seconds, { type: "number" })),
       h("div", { class: "actions" }, h("button", { class: "primary", type: "button", onclick: save }, "Save"),
@@ -472,7 +506,7 @@ async function refresh(force) {
     else await renderCook(force);
   } catch (e) {
     if (e.message === "401") return loginView();
-    if (force) main.replaceChildren(msg(e.message, "err"));
+    if (force) show(msg(e.message, "err"));
   }
 }
 async function route() {
@@ -484,6 +518,13 @@ async function route() {
   await refresh(true);
   if (tab === "cook") timer = setInterval(() => refresh(false), 10000);
 }
+function setTheme(t) {
+  document.documentElement.setAttribute("data-theme", t);
+  try { localStorage.setItem("openbrisket.theme", t); } catch (e) { /* private window */ }
+  document.querySelectorAll("#theme button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themeSet === t)));
+}
+document.querySelectorAll("#theme button").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.themeSet)));
+setTheme(document.documentElement.getAttribute("data-theme") || "light");
 window.addEventListener("hashchange", route);
 let resizeT = null;
 window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { main.querySelectorAll(".box").forEach((b) => b._redraw && b._redraw()); }, 150); });

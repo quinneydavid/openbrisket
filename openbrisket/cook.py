@@ -14,7 +14,7 @@ from .notify import Notifier
 from .plan import prior_params
 from .recipes import Recipe
 from .sources import Reading
-from .store import Store
+from .store import MAX_PROBES, Store
 
 SAMPLE_EVERY_S = 60          # the model and the curve keep one point a minute
 RECENT_KEEP_S = 20 * 60      # raw readings kept for the fast checks
@@ -52,7 +52,11 @@ class Engine:
         self.cook_id = cook_id
         self.state = store.load_state(cook_id) or {"samples": [], "recent": [], "said": {}, "last_sample": None}
         self.prior = prior_params(recipe, meta.get("weight_kg"))
-        self.probe_no = int(meta.get("probe", 1))
+        # Probes in the meat (1-based). Several are allowed; the coldest reading governs every decision,
+        # because the meat is only done when its slowest part is.
+        self.probe_nos = [int(n) for n in (meta.get("probes") or [meta.get("probe", 1)])]
+        self.probe_labels = {int(k): str(v) for k, v in (meta.get("probe_labels") or {}).items()}
+        self.probe_no = self.probe_nos[0]
         self.serve_at = _dt(meta["serve_at"]) if meta.get("serve_at") else None
 
     # --- small helpers ----------------------------------------------------------------------------
@@ -72,6 +76,16 @@ class Engine:
             return False
         self.state["said"][kind] = _iso(now)
         return True
+
+    def probe_name(self, no: int) -> str:
+        return self.probe_labels.get(no) or f"probe {no}"
+
+    def probe_values(self, r: Reading | None) -> dict[int, float | None]:
+        return {n: (r.probe(n) if r else None) for n in self.probe_nos}
+
+    def coldest(self, r: Reading | None) -> float | None:
+        values = [v for v in self.probe_values(r).values() if v is not None]
+        return min(values) if values else None
 
     def samples(self) -> list[model.Sample]:
         return [model.Sample(*s) for s in self.state["samples"]]
@@ -109,7 +123,7 @@ class Engine:
         now = r.at
         events: list[Event] = []
         st, rec = self.state, self.recipe
-        meat = r.probe(self.probe_no)
+        meat = self.coldest(r)
 
         st["recent"].append([_iso(now), r.pit, r.fan])
         cutoff = now - timedelta(seconds=RECENT_KEEP_S)
@@ -137,8 +151,8 @@ class Engine:
             if meat is None:
                 st.setdefault("probe_lost_since", _iso(now))
                 if now - _dt(st["probe_lost_since"]) > timedelta(minutes=2) and self._cooled("probe-lost", now, 30):
-                    events.append(Event("probe-lost", f"food probe {self.probe_no} has stopped reading; check it is "
-                                                      f"plugged in and still in the meat", "alert"))
+                    events.append(Event("probe-lost", "no meat probe is reading; check they are plugged in and "
+                                                      "still in the meat", "alert"))
             else:
                 st.pop("probe_lost_since", None)
                 events += self._meat_checks(now, meat)
@@ -159,9 +173,9 @@ class Engine:
         st["last_sample"] = _iso(now)
         if meat is not None:
             st["samples"].append([round((now - meat_on).total_seconds() / 3600, 4), meat, r.pit])
-        self.store.append_curve(self.cook_id, {
-            "at": _iso(now), "pit": r.pit, "probe1": r.probe(1), "probe2": r.probe(2), "probe3": r.probe(3),
-            "fan": r.fan, "pit_target": r.pit_target})
+        row = {"at": _iso(now), "pit": r.pit, "fan": r.fan, "pit_target": r.pit_target}
+        row.update({f"probe{n}": r.probe(n) for n in range(1, MAX_PROBES + 1)})
+        self.store.append_curve(self.cook_id, row)
 
     # --- checks -----------------------------------------------------------------------------------
     def _recent_pit(self, now: datetime, minutes: float) -> list[float]:
@@ -370,9 +384,18 @@ class Engine:
             f"averaging {mid:.0f} C, recipe {rec.pit_target_c:.0f} +/- {rec.pit_tolerance_c:.0f}")
         if r.fan is not None:
             add("fan-headroom", "fail" if r.fan >= 95 else "pass", f"fan at {r.fan:.0f}%")
-        meat = r.probe(self.probe_no)
-        add("meat-probe", "pass" if meat is not None else "fail",
-            f"{meat:.1f} C" if meat is not None else f"probe {self.probe_no} is not reading")
+        values = self.probe_values(r)
+        meat = self.coldest(r)
+        missing = [self.probe_name(n) for n, v in values.items() if v is None]
+        if meat is None:
+            add("meat-probes", "fail", "no meat probe is reading")
+        elif missing:
+            add("meat-probes", "fail", f"not reading: {', '.join(missing)}")
+        elif len(values) > 1:
+            spread = max(values.values()) - meat
+            add("meat-probes", "pass", f"{len(values)} probes, coldest {meat:.1f} C, spread {spread:.1f} C")
+        else:
+            add("meat-probes", "pass", f"{meat:.1f} C")
         if rec.wrap_at_c is not None:
             if st.get("wrapped_at"):
                 add("wrapped", "pass", "wrapped")
@@ -394,7 +417,7 @@ class Engine:
 
     def overview(self, now: datetime, r: Reading | None) -> dict:
         rec, st = self.recipe, self.state
-        meat = r.probe(self.probe_no) if r else None
+        meat = self.coldest(r)
         est = None
         p = self.projection(now) if st.get("meat_on_at") and not st.get("rest_at") else None
         if p:
@@ -406,7 +429,8 @@ class Engine:
             "id": self.cook_id, "recipe": rec.name, "recipe_version": rec.version, "cut": rec.cut,
             "weight_kg": self.meta.get("weight_kg"), "serve_at": self.meta.get("serve_at"),
             "opened_at": self.meta.get("opened_at"), "phase": self.phase(), "wrapped": bool(st.get("wrapped_at")),
-            "meat_on_at": st.get("meat_on_at"), "probe": self.probe_no,
+            "meat_on_at": st.get("meat_on_at"),
+            "probes": [{"no": n, "label": self.probe_name(n), "temp_c": v} for n, v in self.probe_values(r).items()],
             "targets": {"pit_c": rec.pit_target_c, "pit_tolerance_c": rec.pit_tolerance_c,
                         "meat_c": rec.meat_target_c, "stall_from_c": rec.stall_from_c, "stall_to_c": rec.stall_to_c,
                         "wrap_at_c": rec.wrap_at_c},
@@ -430,10 +454,13 @@ class Engine:
             phase += f", {fmt_dur((now - meat_on).total_seconds() / 3600)} since meat on"
         lines.append(f"phase: {phase}" + (", wrapped" if st.get("wrapped_at") else ""))
         if r is not None:
-            meat = r.probe(self.probe_no)
+            meat = self.coldest(r)
             lines.append("now: pit " + (f"{r.pit:.0f} C" if r.pit is not None else "no reading")
                          + f" (recipe {rec.pit_target_c:.0f}), meat "
                          + (f"{meat:.1f} C" if meat is not None else "no reading")
+                         + (" (coldest of " + ", ".join(f"{self.probe_name(n)} {v:.1f}" for n, v in
+                                                        self.probe_values(r).items() if v is not None) + ")"
+                            if len(self.probe_nos) > 1 and meat is not None else "")
                          + f" (target {rec.meat_target_c:.0f}), fan "
                          + (f"{r.fan:.0f}%" if r.fan is not None else "n/a"))
         p = self.projection(now) if meat_on and not self._t("rest_at") else None

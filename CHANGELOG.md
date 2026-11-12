@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Several probes in the meat: tick them when opening a cook and name them (flat, point). The coldest one decides
+  stall, wrap point, target and the estimate; every probe is drawn, listed and recorded.
+- Up to nine food probe entities in Settings, so a second thermometer's probes can be used.
+- Light, dark or auto theme, chosen in the header and remembered per browser. Light is the default.
+- The page now uses GitHub's open-source Primer colours.
+- Fixed: the Recipes tab showed "[object HTMLElement]" and the start page showed a stray "null".
+
 ## 0.2.0
 
 - `openbrisket serve`: web page (cook, recipes, history, settings), JSON API and background follower in one process.

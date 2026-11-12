@@ -32,7 +32,7 @@ ob() { curl -sS -H "Authorization: Bearer $OPENBRISKET_TOKEN" -H "Content-Type: 
 | Where the cook stands | `ob /api/status` |
 | Recipes | `ob /api/recipes` |
 | Plan without starting | `ob /api/plan '{"recipe":"texas-brisket","weight_kg":5.4,"serve_at":"2026-11-14 18:00"}'` |
-| Open a cook | `ob /api/cooks '{"recipe":"texas-brisket","weight_kg":5.4,"serve_at":"2026-11-14 18:00","probe":1}'` |
+| Open a cook | `ob /api/cooks '{"recipe":"texas-brisket","weight_kg":5.4,"serve_at":"2026-11-14 18:00","probes":[1,2],"probe_labels":{"1":"flat","2":"point"}}'` |
 | Smoke test | `ob /api/smoke-test '{}'` |
 | Log a step | `ob /api/log '{"step":"meat-on"}'` (steps: `meat-on`, `wrap`, `spritz`, `rest`, `note`) |
 | Close | `ob /api/close '{"score":8.5,"cooked_weight_kg":3.1,"notes":"flat a little dry"}'` |
@@ -45,7 +45,8 @@ Errors come back as `{"error": "..."}` with a plain sentence; pass it on.
 `cook` is null when nothing is open. Otherwise:
 
 - `phase`: preheating, cooking, stall, resting.
-- `meat_c`, and `reading.pit_c`, `reading.fan_pct`: temperatures in degrees Celsius.
+- `meat_c`, and `reading.pit_c`, `reading.fan_pct`: temperatures in degrees Celsius. With several probes in
+  the meat, `meat_c` is the coldest and `probes` lists each one by name; the coldest decides when it is done.
 - `estimate.off_at`: when the meat should come off; `estimate.rest_available_min`: minutes between that
   and serving. `estimate.data_weight` near 0 means the estimate is still mostly the recipe's timing.
 - `pipeline`: the stages with done / active / pending / failed.

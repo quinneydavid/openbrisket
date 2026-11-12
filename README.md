@@ -90,10 +90,14 @@ using the terminal alone.
 ## The page
 
 - **Cook**: the open cook as a row of stages, live temperatures, the curve with the estimate drawn
-  ahead, status checks, buttons for the steps you do by hand, and the commit log.
+  ahead, status checks, buttons for the steps you do by hand, and the commit log. Put as many probes
+  in the meat as you like: the coldest one decides when it is done.
 - **Recipes**: every recipe with its numbers, rub and source file.
 - **History**: a year of cooks at a glance, and each past cook with its curve, events and score.
 - **Settings**: readings, Telegram, and the address and token for agents.
+
+The header has a light / dark / auto switch. The colours are GitHub's open-source Primer palette;
+OpenBrisket is not affiliated with GitHub.
 
 Everything under `/api` and `/mcp` needs the access token. Put the page behind HTTPS (a reverse proxy)
 before reaching it from outside your home network.

@@ -42,7 +42,12 @@ TOOLS = [
     {"name": "start_cook",
      "description": "Open a cook from a recipe. Only one cook can be open at a time.",
      "inputSchema": _obj({"recipe": RECIPE, "weight_kg": WEIGHT, "serve_at": SERVE,
-                          "probe": {"type": "integer", "description": "Which food probe is in the meat (default 1)"}},
+                          "probes": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 9},
+                                     "description": "Which food probes are in the meat (default [1]). With several, "
+                                                    "the coldest one decides when the meat is done."},
+                          "probe_labels": {"type": "object", "additionalProperties": {"type": "string"},
+                                           "description": "Optional names by probe number, e.g. {\"1\": \"flat\", "
+                                                          "\"2\": \"point\"}"}},
                          ["recipe", "serve_at"])},
     {"name": "smoke_test",
      "description": "The pre-cook check: data feed, pit steady at the recipe's temperature for 15 minutes, fan "
@@ -74,7 +79,8 @@ def _call(service: Service, name: str, a: dict):
     if name == "plan_cook":
         return service.plan(a.get("recipe"), a.get("weight_kg"), a.get("serve_at"))
     if name == "start_cook":
-        return service.start(a.get("recipe"), a.get("weight_kg"), a.get("serve_at"), a.get("probe") or 1)
+        return service.start(a.get("recipe"), a.get("weight_kg"), a.get("serve_at"), a.get("probes") or a.get("probe"),
+                             a.get("probe_labels"))
     if name == "smoke_test":
         return service.smoke_test()
     if name == "log_step":

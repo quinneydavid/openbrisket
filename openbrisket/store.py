@@ -20,7 +20,8 @@ from datetime import datetime
 
 import yaml
 
-CURVE_FIELDS = ["at", "pit", "probe1", "probe2", "probe3", "fan", "pit_target"]
+MAX_PROBES = 9
+CURVE_FIELDS = ["at", "pit", *[f"probe{n}" for n in range(1, MAX_PROBES + 1)], "fan", "pit_target"]
 GIT_ID = ["-c", "user.name=OpenBrisket", "-c", "user.email=openbrisket@localhost"]
 
 
