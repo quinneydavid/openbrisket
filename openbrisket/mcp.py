@@ -75,6 +75,7 @@ TOOLS = [
          "wrap_at_c": {"type": "number", "description": "Leave out for an unwrapped cook"},
          "wrap_material": {"type": "string"},
          "rest_min_minutes": {"type": "number"}, "rest_ideal_minutes": {"type": "number"},
+         "hold_min_c": {"type": "number", "description": "Lowest meat temperature for a long hold. Default 60"},
          "change": {"type": "string", "description": "One line on what changed and why (the commit message)"}},
          ["name", "cut", "pit_target_c", "meat_target_c"])},
     {"name": "plan_cook",

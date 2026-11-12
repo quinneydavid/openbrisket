@@ -63,6 +63,7 @@ While `run` is going it leaves notes (on Telegram if you set a bot, in the termi
 | Behind schedule | The estimate leaves less than the minimum rest before serving |
 | Probe or feed lost | No reading from the meat probe, or from the pit at all |
 | Rest | Minimum and ideal rest reached |
+| Hold | Meat within 4 °C of the holding floor, and again if it drops below it |
 
 ## Run it
 

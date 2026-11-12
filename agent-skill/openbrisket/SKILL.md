@@ -54,6 +54,9 @@ Errors come back as `{"error": "..."}` with a plain sentence; pass it on.
 - `estimate.off_at`: when the meat should come off; `estimate.rest_available_min`: minutes between that
   and serving. `estimate.data_weight` near 0 means the estimate is still mostly the recipe's timing.
 - `pipeline`: the stages with done / active / pending / failed.
+- `hold`: once the meat is off and resting. How long it has been holding, the meat temperature, the cooling
+  rate, and `hours_until_floor`, the time left before it reaches the holding floor (60 °C unless the recipe says
+  otherwise). A long hold is normal for brisket; only worry the cook when it nears the floor.
 - `asks`: photos OpenBrisket is waiting to be shown (see Photos). Mention them when you report on the cook.
 - `checks`: each is pass, fail or pending with a one-line detail. Lead with any that fail.
 

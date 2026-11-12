@@ -142,6 +142,9 @@ def recipe_doc(form: dict) -> dict:
             doc["wrap"]["material"] = str(form["wrap_material"]).strip()
     doc["rest"] = {"min_minutes": _num(form.get("rest_min_minutes"), "minimum rest", False) or 30,
                    "ideal_minutes": _num(form.get("rest_ideal_minutes"), "ideal rest", False) or 60}
+    hold = _num(form.get("hold_min_c"), "hold floor", False)
+    if hold is not None and hold != 60:
+        doc["rest"]["hold_min_c"] = hold
     return doc
 
 

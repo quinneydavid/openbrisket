@@ -136,6 +136,7 @@ function drawChart(host, curve, opts) {
   const refs = [];
   if (opts.pitTarget) refs.push([opts.pitTarget, "pit " + opts.pitTarget.toFixed(0)]);
   if (opts.meatTarget) refs.push([opts.meatTarget, "target " + opts.meatTarget.toFixed(0)]);
+  if (opts.floor) refs.push([opts.floor, "hold floor " + opts.floor.toFixed(0)]);
   for (const [v] of refs) svg.append(s("line", { class: "ref", x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
 
   const ends = [];
@@ -309,7 +310,7 @@ function cookView(st, detail) {
   const t = c.targets;
   const size = c.weight_kg ? `${c.weight_kg} kg` : "sized by time";
   const head = h("div", {}, h("div", { class: "title-row" }, h("h1", {}, h("b", {}, c.recipe), " ", h("span", { class: "muted" }, `v${c.recipe_version}`)),
-    h("span", { class: "badge open" }, "Open"), h("span", { class: "badge" }, c.phase + (c.wrapped ? ", wrapped" : ""))),
+    h("span", { class: "badge open" }, "Open"), h("span", { class: "badge" }, c.hold ? "resting / holding" : c.phase + (c.wrapped ? ", wrapped" : ""))),
     h("p", { class: "sub mono" }, `${c.id} · ${c.cut} · ${size}` + (c.serve_at ? ` · serving ${dayClock(c.serve_at)}` : "")));
 
   const sym = { done: "✓", active: "●", pending: "", failed: "✕", skipped: "–" };
@@ -319,21 +320,26 @@ function cookView(st, detail) {
 
   const est = c.estimate;
   const tiles = h("div", { class: "tiles" },
-    h("div", { class: "tile" }, h("div", { class: "k" }, "Pit"), h("div", { class: "v" }, r && r.pit_c !== null ? r.pit_c.toFixed(0) : "–", h("small", {}, " °C")),
-      h("div", { class: "d" }, `recipe ${t.pit_c} ± ${t.pit_tolerance_c}`)),
+    h("div", { class: "tile" }, h("div", { class: "k" }, c.hold ? "Pit probe (holding box)" : "Pit"), h("div", { class: "v" }, r && r.pit_c !== null ? r.pit_c.toFixed(0) : "–", h("small", {}, " °C")),
+      h("div", { class: "d" }, c.hold ? "where the pit probe sits now" : `recipe ${t.pit_c} ± ${t.pit_tolerance_c}`)),
     h("div", { class: "tile" }, h("div", { class: "k" }, c.probes.length > 1 ? `Meat (coldest of ${c.probes.length})` : `Meat (${c.probes[0].label})`),
       h("div", { class: "v" }, c.meat_c !== null && c.meat_c !== undefined ? c.meat_c.toFixed(1) : "–", h("small", {}, " °C")),
-      h("div", { class: "d" }, `target ${t.meat_c}`),
+      h("div", { class: "d" }, c.hold ? `holding, floor ${c.hold.floor_c} °C` : `target ${t.meat_c}`),
       c.probes.length > 1 ? h("ul", { class: "probes" }, c.probes.slice(0, 6).map((p, i) => h("li", {}, h("span", { class: "sw s" + (i + 1) }), cap(p.label),
         h("span", { class: "num" }, deg(p.temp_c, 1))))) : null),
     h("div", { class: "tile" }, h("div", { class: "k" }, "Fan"), h("div", { class: "v" }, r && r.fan_pct !== null ? r.fan_pct.toFixed(0) : "–", h("small", {}, " %")),
       h("div", { class: "d" }, r && r.pit_target_c ? `controller set to ${r.pit_target_c.toFixed(0)} °C` : "")),
+    c.hold ? h("div", { class: "tile" }, h("div", { class: "k" }, "Hold"), h("div", { class: "v" }, dur(c.hold.hours * 60)),
+      h("div", { class: "d" }, [c.hold.start_c !== null && c.hold.start_c !== undefined ? `from ${c.hold.start_c.toFixed(0)} °C` : null,
+        c.hold.rate_c_per_h !== null ? `${c.hold.rate_c_per_h < 0 ? "falling" : "rising"} ${Math.abs(c.hold.rate_c_per_h).toFixed(1)} °C an hour` : null,
+        c.hold.hours_until_floor ? `about ${dur(c.hold.hours_until_floor * 60)} until the ${c.hold.floor_c} °C floor` : `floor ${c.hold.floor_c} °C`,
+        c.hold.minutes_below_floor ? `${dur(c.hold.minutes_below_floor)} below the floor` : null].filter(Boolean).join(", "))) :
     h("div", { class: "tile" }, h("div", { class: "k" }, "Off the pit"), h("div", { class: "v" }, est && est.off_at ? clock(est.off_at) : "–"),
       h("div", { class: "d" }, est && est.off_at ? (est.rest_available_min !== undefined ? `${dur(est.rest_available_min)} before serving` : "") +
         (est.data_weight ? `, ${Math.round(est.data_weight * 100)}% from this cook` : ", from the recipe") : "estimate after the meat is on")));
 
   const proj = est && est.off_at ? { t: new Date(est.off_at).getTime(), value: t.meat_c } : null;
-  const chart = chartBox(detail.curve, { pitTarget: t.pit_c, meatTarget: t.meat_c, stall: [t.stall_from_c, t.stall_to_c], projection: proj,
+  const chart = chartBox(detail.curve, { pitTarget: t.pit_c, meatTarget: t.meat_c, stall: [t.stall_from_c, t.stall_to_c], projection: proj, floor: c.hold ? c.hold.floor_c : null,
     probes: c.probes.map((p) => ({ no: p.no, label: p.label })) });
 
   const checks = box("Checks", h("ul", { class: "rows" }, c.checks.map((k) => h("li", {}, stateCell(k.state), h("span", { class: "name" }, k.name), h("span", { class: "detail" }, k.detail)))));
@@ -359,7 +365,7 @@ function cookView(st, detail) {
       !on ? stepBtn("meat-on", "Meat on", true) : null,
       on && !resting && !c.wrapped && t.wrap_at_c !== null ? stepBtn("wrap", "Wrap") : null,
       on && !resting ? stepBtn("spritz", "Spritz") : null,
-      on && !resting ? stepBtn("rest", "Off, resting", true) : null,
+      on && !resting ? stepBtn("rest", "Off, resting / holding", true) : null,
       stepBtn("note", "Add note")),
     smokeOut));
 
@@ -472,13 +478,14 @@ function recipeForm(r, rubs) {
       field("c-wrapm", "Wrap in", r.wrap_material, { placeholder: "butcher paper" }),
       field("c-rest1", "Rest, minimum minutes", r.rest_min_minutes, { type: "number" }),
       field("c-rest2", "Rest, ideal minutes", r.rest_ideal_minutes, { type: "number" }),
+      field("c-hold", "Hold floor, °C", r.hold_min_c ?? 60, { type: "number", hint: "During a long hold you are warned when the meat gets down to this." }),
       fresh ? null : field("c-change", "What changed and why", "", { wide: true, placeholder: "less sugar, the bark burnt last time", hint: `Becomes the commit message. Now at version ${r.version}; a changed recipe gets the next number.` })),
     h("div", { class: "actions" },
       h("button", { type: "button", class: "primary", onclick: (ev) => act(ev.target, async () => {
         const out = await api("/api/recipes", { name: fv("c-name"), version: r.version, cut: fv("c-cut"), description: fv("c-desc"), rub: fv("c-rub") || null,
           pit_target_c: fnum("c-pit"), pit_tolerance_c: fnum("c-tol"), meat_target_c: fnum("c-meat"), hours_per_kg: fnum("c-perkg"), hours_fixed: fnum("c-fixed"),
           fridge_out_min: fnum("c-fridge"), dry_brine_hours: fnum("c-brine"), stall_from_c: fnum("c-stall1"), stall_to_c: fnum("c-stall2"), wrap_at_c: fnum("c-wrap"),
-          wrap_material: fv("c-wrapm"), rest_min_minutes: fnum("c-rest1"), rest_ideal_minutes: fnum("c-rest2"), change: fresh ? "" : fv("c-change") });
+          wrap_material: fv("c-wrapm"), rest_min_minutes: fnum("c-rest1"), rest_ideal_minutes: fnum("c-rest2"), hold_min_c: fnum("c-hold"), change: fresh ? "" : fv("c-change") });
         if (out.warnings && out.warnings.length) { alert("Saved, with a warning:\n\n" + out.warnings.join("\n")); }
         location.hash = "#recipes"; await route(); }) }, "Save recipe"),
       h("button", { type: "button", onclick: () => { location.hash = "#recipes"; } }, "Cancel"))));
@@ -567,6 +574,9 @@ function analysisBox(a, curve) {
     a.pit ? ["Pit", `averaged ${a.pit.mean_c} °C (recipe ${a.pit.recipe_c}), from ${a.pit.min_c} to ${a.pit.max_c}, varying ±${a.pit.stdev_c}`] : null,
     a.model ? ["Heating rate", a.model.data_weight ? `${Math.round(a.model.k_ratio * 100)}% of what the recipe assumes` : "not enough readings to tell"] : null,
     a.model && a.stall && a.stall.start_h !== null ? ["Stall slowdown", `meat heated at ${Math.round((a.wrapped_at_h !== null && a.wrapped_at_h !== undefined ? a.model.wrapped_factor : a.model.stall_factor) * 100)}% of its normal rate`] : null,
+    a.hold ? ["Hold", `${hrs(a.hold.hours)}, meat from ${a.hold.start_c ?? "–"} to ${a.hold.end_c ?? "–"} °C` +
+      (a.hold.mean_rate_c_per_h !== null && a.hold.mean_rate_c_per_h !== undefined ? ` (${a.hold.mean_rate_c_per_h} °C an hour)` : "") +
+      `, lowest ${a.hold.min_c ?? "–"} °C` + (a.hold.minutes_below_floor ? `, ${dur(a.hold.minutes_below_floor)} below the ${a.hold.floor_c} °C floor` : `, never below the ${a.hold.floor_c} °C floor`)] : null,
     amb.length || hum.length || a.rain_minutes ? ["Outdoors", [amb.length ? `${avg(amb).toFixed(0)} °C` : null, hum.length ? `${avg(hum).toFixed(0)}% humidity` : null,
       a.rain_minutes ? `rain for ${dur(a.rain_minutes)}` : (curve.some((p) => p.rain !== null && p.rain !== undefined) ? "no rain" : null)].filter(Boolean).join(", ")] : null,
     a.estimate ? ["Estimate error", ["at_25pct", "at_50pct", "at_75pct"].filter((k) => a.estimate[k]).map((k) =>

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- The hold is followed. After "Off, resting / holding" the app keeps recording every probe, and shows how long the
+  meat has been holding, its temperature, how fast it is cooling and how long until it reaches the holding floor.
+- A holding floor per recipe (`rest.hold_min_c`, default 60 C, never below 57): one note when the meat gets within
+  4 C of it, and an alert below it.
+- It works with only the meat probes reading, so the fan controller can be switched off during the hold.
+- The hold is drawn on the chart and summarised in the cook's analysis (length, start and end temperature, cooling
+  rate, any time below the floor).
+
 ## 0.5.2
 
 - Rain as a third optional weather sensor, logged with every reading. It takes a number (mm, mm/h) or a wet/dry

@@ -153,6 +153,11 @@ class Engine:
         cutoff = now - timedelta(seconds=RECENT_KEEP_S)
         st["recent"] = [x for x in st["recent"] if _dt(x[0]) >= cutoff]
 
+        if self._t("rest_at"):
+            events += self._hold(now, self._t("rest_at"), meat, r)
+            self._finish(events, now)
+            return events
+
         if not r.connected or r.pit is None:
             st.setdefault("no_data_since", _iso(now))
             if now - _dt(st["no_data_since"]) > timedelta(minutes=3) and self._cooled("no-data", now, 30):
@@ -163,11 +168,8 @@ class Engine:
         st.pop("no_data_since", None)
 
         meat_on = self._t("meat_on_at")
-        resting = self._t("rest_at")
 
-        if resting:
-            events += self._rest_checks(now, resting)
-        elif meat_on is None:
+        if meat_on is None:
             events += self._preheat_checks(now, r)
         else:
             self._sample(now, meat_on, meat, r)
@@ -332,16 +334,81 @@ class Engine:
                           {"projected_off": _iso(off), "late_hours": round(late, 2)})]
         return []
 
+    # --- the rest and the hold ---------------------------------------------------------------------
+    def _hold(self, now: datetime, resting: datetime, meat: float | None, r: Reading) -> list[Event]:
+        """After the meat comes off it is still followed: a brisket can sit in a holding box for many hours, and
+        what matters then is that it stays hot enough. Works with only the meat probes reading."""
+        st, rec = self.state, self.recipe
+        events = self._rest_checks(now, resting)
+        last = self._t("last_sample")
+        if not last or (now - last).total_seconds() >= SAMPLE_EVERY_S:
+            st["last_sample"] = _iso(now)
+            row = {"at": _iso(now), "pit": r.pit, "fan": r.fan, "pit_target": r.pit_target, "ambient": r.ambient,
+                   "humidity": r.humidity, "rain": r.rain}
+            row.update({f"probe{n}": r.probe(n) for n in range(1, MAX_PROBES + 1)})
+            self.store.append_curve(self.cook_id, row)
+            if meat is not None:
+                t_h = round((now - resting).total_seconds() / 3600, 3)
+                st.setdefault("hold_start_c", meat)
+                st["hold_min_c"] = min(st.get("hold_min_c", meat), meat)
+                st["hold_last_c"] = meat
+                log = st.setdefault("hold", [])
+                if not log or t_h - log[-1][0] >= 5 / 60:
+                    log.append([t_h, meat])
+                if meat < rec.hold_min_c:
+                    st["hold_below_min"] = st.get("hold_below_min", 0) + 1
+        if meat is None:
+            return events
+        stats = self.hold_stats(now, r)
+        if meat < rec.hold_min_c:
+            if self._cooled("hold-low", now, 30):
+                events.append(Event("hold-low", f"meat has dropped to {meat:.0f} C, below the {rec.hold_min_c:.0f} C "
+                                                f"holding floor. Serve it now or get it somewhere hotter: it should "
+                                                f"not sit below this for long.", "alert", {"meat_c": round(meat, 1)}))
+        elif meat < rec.hold_min_c + 4 and self._once("hold-near", now):
+            left = stats.get("hours_until_floor")
+            events.append(Event("hold-near", f"hold: meat is at {meat:.0f} C, {meat - rec.hold_min_c:.0f} C above the "
+                                             f"{rec.hold_min_c:.0f} C floor"
+                                             + (f", about {fmt_dur(left)} left at this rate." if left else "."), "info"))
+        return events
+
+    def hold_stats(self, now: datetime, r: Reading | None) -> dict:
+        """Where the hold stands: how long, how hot, how fast it is cooling and how long until the floor."""
+        st, rec = self.state, self.recipe
+        resting = self._t("rest_at")
+        if resting is None:
+            return {}
+        meat = self.coldest(r) if r is not None else None
+        if meat is None:
+            meat = st.get("hold_last_c")
+        out = {"since": st["rest_at"], "hours": round((now - resting).total_seconds() / 3600, 2), "meat_c": meat,
+               "start_c": st.get("hold_start_c"), "min_c": st.get("hold_min_c"), "floor_c": rec.hold_min_c,
+               "box_c": r.pit if r is not None else None, "minutes_below_floor": st.get("hold_below_min", 0),
+               "rate_c_per_h": None, "hours_until_floor": None}
+        log = st.get("hold") or []
+        if len(log) >= 2:
+            recent = [p for p in log if log[-1][0] - p[0] <= 1.0]
+            first = recent[0] if len(recent) >= 2 and recent[-1][0] - recent[0][0] >= 0.25 else log[0]
+            span = log[-1][0] - first[0]
+            if span >= 0.25:
+                rate = (log[-1][1] - first[1]) / span
+                out["rate_c_per_h"] = round(rate, 2)
+                if meat is not None and rate < -0.05 and meat > rec.hold_min_c:
+                    out["hours_until_floor"] = round((meat - rec.hold_min_c) / -rate, 2)
+        return out
+
     def _rest_checks(self, now: datetime, resting: datetime) -> list[Event]:
         rec = self.recipe
         mins = (now - resting).total_seconds() / 60
         if mins >= rec.rest_ideal_minutes and self._once("rest-ideal", now):
-            return [Event("rest-ideal", f"rested {rec.rest_ideal_minutes} min: slice and serve. Then close the cook "
-                                        f"with your score. A photo of a slice records the smoke ring and moisture.",
+            return [Event("rest-ideal", f"rested {rec.rest_ideal_minutes} min: slice whenever you are ready, or keep "
+                                        f"holding it above {rec.hold_min_c:.0f} C. Close the cook with your score "
+                                        f"after serving. A photo of a slice records the smoke ring and moisture.",
                           "ask", {"check": "slice"})]
         if mins >= rec.rest_min_minutes and self._once("rest-min", now):
-            return [Event("rest-min", f"minimum rest of {rec.rest_min_minutes} min reached; it can be sliced from now, "
-                                      f"longer is better up to {rec.rest_ideal_minutes} min.", "info")]
+            return [Event("rest-min", f"minimum rest of {rec.rest_min_minutes} min reached; it can be sliced from now. "
+                                      f"Longer is better, and a long hold is fine while the meat stays above "
+                                      f"{rec.hold_min_c:.0f} C.", "info")]
         return []
 
     # --- structured views for the web page, the API and agents ------------------------------------
@@ -399,7 +466,9 @@ class Engine:
         def add(name, state, detail):
             out.append({"name": name, "state": state, "detail": detail})
 
-        if r is None or not r.connected or r.pit is None:
+        if st.get("rest_at") and r is not None and self.coldest(r) is not None:
+            pass                              # during the hold the meat probes are enough
+        elif r is None or not r.connected or r.pit is None:
             add("data-feed", "fail", "no readings from the pit")
             return out
         add("data-feed", "pass", "readings arriving")
@@ -415,6 +484,15 @@ class Engine:
             mins = (now - _dt(st["rest_at"])).total_seconds() / 60
             add("rest", "pass" if mins >= rec.rest_min_minutes else "pending",
                 f"{mins:.0f} of {rec.rest_min_minutes} min minimum ({rec.rest_ideal_minutes} ideal)")
+            h = self.hold_stats(now, r)
+            if h.get("meat_c") is None:
+                add("hold-temperature", "pending", "no meat probe is reading")
+            elif h["meat_c"] < rec.hold_min_c:
+                add("hold-temperature", "fail", f"{h['meat_c']:.1f} C, below the {rec.hold_min_c:.0f} C floor")
+            else:
+                left = h.get("hours_until_floor")
+                add("hold-temperature", "pass", f"{h['meat_c']:.1f} C, floor {rec.hold_min_c:.0f} C"
+                    + (f", about {fmt_dur(left)} left at this rate" if left else ""))
             return out
         pits = self._recent_pit(now, 15) or [r.pit]
         mid = median(pits)
@@ -475,6 +553,7 @@ class Engine:
                         "wrap_at_c": rec.wrap_at_c},
             "meat_c": meat, "estimate": est, "pipeline": self.pipeline(), "checks": self.live_checks(now, r),
             "asks": st.get("asks", []), "photo_checks": st.get("checks", {}),
+            "hold": self.hold_stats(now, r) if st.get("rest_at") else None,
         }
 
     def analysis(self, now: datetime) -> dict:
@@ -507,6 +586,13 @@ class Engine:
                             "k_ratio": round(f.params.k / self.prior.k, 2), "stall_factor": round(f.params.stall_factor, 3),
                             "wrapped_factor": round(f.params.wrapped_factor, 3), "data_weight": round(f.weight, 2)}
         out["rain_minutes"] = st.get("rain_minutes", 0)
+        if st.get("rest_at"):
+            h = self.hold_stats(now, None)
+            log = st.get("hold") or []
+            out["hold"] = {"hours": h["hours"], "start_c": h["start_c"], "end_c": st.get("hold_last_c"),
+                           "min_c": h["min_c"], "floor_c": h["floor_c"], "minutes_below_floor": h["minutes_below_floor"],
+                           "mean_rate_c_per_h": round((log[-1][1] - log[0][1]) / (log[-1][0] - log[0][0]), 2)
+                           if len(log) >= 2 and log[-1][0] > log[0][0] else None}
         total = out["hours_to_target"]
         if total and st.get("est_log"):
             marks = {}
@@ -524,7 +610,12 @@ class Engine:
         lines = [f"{self.cook_id}: {rec.name} v{rec.version}"]
         meat_on = self._t("meat_on_at")
         if self._t("rest_at"):
-            phase = f"resting for {fmt_dur((now - self._t('rest_at')).total_seconds() / 3600)}"
+            h = self.hold_stats(now, r)
+            phase = f"resting / holding for {fmt_dur(h['hours'])}"
+            if h.get("meat_c") is not None:
+                phase += f", meat at {h['meat_c']:.0f} C (floor {h['floor_c']:.0f})"
+                if h.get("hours_until_floor"):
+                    phase += f", about {fmt_dur(h['hours_until_floor'])} until the floor"
         elif meat_on is None:
             phase = "preheating (meat not on yet)"
         elif st.get("stall_at") and "stall-end" not in st["said"]:

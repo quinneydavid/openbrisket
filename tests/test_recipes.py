@@ -37,6 +37,15 @@ class RecipeTests(unittest.TestCase):
         d["meat"]["target_c"] = 75
         self.assertEqual(recipes.validate_recipe(d), [])
 
+    def test_hold_floor(self):
+        d = self.doc()
+        self.assertEqual(recipes.from_doc(d).hold_min_c, 60)
+        d["rest"]["hold_min_c"] = 50
+        self.assertTrue(any("not safe to hold below 57" in p for p in recipes.validate_recipe(d)))
+        d["rest"]["hold_min_c"] = 63
+        self.assertEqual(recipes.validate_recipe(d), [])
+        self.assertEqual(recipes.from_doc(d).hold_min_c, 63)
+
     def test_ground_meat_floor(self):
         self.assertEqual(recipes.min_safe_c("beef-ground-burger"), 71)
         self.assertEqual(recipes.min_safe_c("beef-brisket-packer"), 54)

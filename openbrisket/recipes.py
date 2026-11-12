@@ -20,6 +20,7 @@ MIN_SAFE_C = {
 }
 GROUND_MIN_SAFE_C = 71
 PIT_RANGE_C = (80, 200)
+HOLD_FLOOR_C = 57          # hot-holding limit; recipes default to 60 for a margin
 
 
 class RecipeError(Exception):
@@ -44,6 +45,7 @@ class Recipe:
     wrap_material: str | None
     rest_min_minutes: int
     rest_ideal_minutes: int
+    hold_min_c: float = 60.0      # below this the meat should not be held; the hold is watched against it
     rub: str | None = None
     description: str = ""
     path: str = ""
@@ -168,6 +170,10 @@ def validate_recipe(doc: dict, base_dir: str | None = None, rub_dirs: list[str] 
     rideal = _num(rest, "ideal_minutes", p, "rest", required=False)
     if rmin is not None and rideal is not None and rideal < rmin:
         p.append("rest.ideal_minutes must be at least rest.min_minutes")
+    hold = _num(rest, "hold_min_c", p, "rest", required=False)
+    if hold is not None and not HOLD_FLOOR_C <= hold <= 90:
+        p.append(f"rest.hold_min_c {hold} must be between {HOLD_FLOOR_C} and 90 C (food is not safe to hold below "
+                 f"{HOLD_FLOOR_C} C)")
 
     rub = doc.get("rub")
     if rub is not None:
@@ -242,6 +248,7 @@ def from_doc(doc: dict, path: str = "") -> Recipe:
         wrap_at_c=float(wrap["at_c"]) if wrap.get("at_c") is not None else None,
         wrap_material=wrap.get("material"),
         rest_min_minutes=int(rest.get("min_minutes", 30)), rest_ideal_minutes=int(rest.get("ideal_minutes", 60)),
+        hold_min_c=float(rest.get("hold_min_c", 60)),
         rub=doc.get("rub"), description=doc.get("description", ""), path=path, raw=doc,
     )
 

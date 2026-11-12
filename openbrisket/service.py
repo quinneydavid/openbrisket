@@ -222,7 +222,7 @@ class Service:
                 "fridge_out_min": r.fridge_out_min, "dry_brine_hours": r.dry_brine_hours,
                 "stall_from_c": r.stall_from_c, "stall_to_c": r.stall_to_c, "wrap_at_c": r.wrap_at_c,
                 "wrap_material": r.wrap_material, "rest_min_minutes": r.rest_min_minutes,
-                "rest_ideal_minutes": r.rest_ideal_minutes, "rub": rub,
+                "rest_ideal_minutes": r.rest_ideal_minutes, "hold_min_c": r.hold_min_c, "rub": rub,
                 "warnings": recipes.warnings(r.raw, rub_doc), "source": source,
             })
         return out

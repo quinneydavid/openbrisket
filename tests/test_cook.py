@@ -225,6 +225,49 @@ class EngineTests(Base):
             header, row = f.readline().strip().split(","), f.readline().strip().split(",")
         self.assertEqual(row[header.index("probe3")], "150.0")   # every probe is recorded, in the meat or not
 
+    def test_a_long_hold_is_followed_with_only_the_meat_probe(self):
+        cook_id, engine = self.open()
+        engine.manual("meat-on", "", START)
+        rest = START + timedelta(hours=14)
+        engine.manual("rest", "", rest)
+        rows_before = 0
+        last = None
+        for minute in range(0, 14 * 60 + 1):
+            # in a holding box: the fan controller is off (no pit reading), the meat cools 2.5 C an hour from 93 C
+            meat = 93.0 - 2.5 * minute / 60
+            last = Reading(at=rest + timedelta(minutes=minute), pit=None, probes=[round(meat, 2), None, None],
+                           connected=False)
+            engine.tick(last)
+        kinds = self.kinds(cook_id)
+        self.assertNotIn("no-data", kinds)                      # a silent pit is normal during a hold
+        self.assertEqual(kinds.count("hold-near"), 1)
+        self.assertGreaterEqual(kinds.count("hold-low"), 1)
+        self.assertLess(kinds.index("hold-near"), kinds.index("hold-low"))
+        events = self.store.events(cook_id)
+        near = next(e for e in events if e["event"] == "hold-near")
+        self.assertIn("left at this rate", near["message"])
+        with open(os.path.join(self.store.dir(cook_id), "curve.csv")) as f:
+            rows = f.read().splitlines()
+        self.assertGreater(len(rows), 14 * 60)                  # the hold is on the curve, a row a minute
+        h = engine.hold_stats(last.at, last)
+        self.assertAlmostEqual(h["hours"], 14.0, delta=0.01)
+        self.assertEqual((h["start_c"], h["floor_c"]), (93.0, 60.0))
+        self.assertAlmostEqual(h["rate_c_per_h"], -2.5, delta=0.1)
+        self.assertGreater(h["minutes_below_floor"], 30)
+        early = Reading(at=rest + timedelta(hours=14, minutes=1), pit=None, probes=[70.0, None, None])
+        self.assertEqual(engine.hold_stats(early.at, early)["hours_until_floor"], round(10 / 2.5, 2))
+        checks = {c["name"]: c for c in engine.live_checks(last.at, last)}
+        self.assertEqual(checks["hold-temperature"]["state"], "fail")
+        self.assertEqual(checks["data-feed"]["state"], "pass")       # the meat probe alone counts as a feed
+        a = engine.analysis(last.at)["hold"]
+        self.assertAlmostEqual(a["mean_rate_c_per_h"], -2.5, delta=0.05)
+        self.assertEqual(a["start_c"], 93.0)
+        self.assertLess(a["end_c"], 60)
+        self.assertIn("resting / holding for 14 h 00 min, meat at 58 C (floor 60)", engine.status(last.at, last))
+        o = engine.overview(last.at, last)
+        self.assertEqual(o["phase"], "resting")
+        self.assertEqual(o["hold"]["floor_c"], 60.0)
+
     def test_status_text(self):
         cook_id, engine = self.open()
         engine.manual("meat-on", "", START)
