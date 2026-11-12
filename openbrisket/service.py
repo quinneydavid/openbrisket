@@ -102,7 +102,12 @@ class Service:
                 ent = {k: v.strip() for k, v in ent.items()}
                 probes = src["entities"].get("probes")
                 if isinstance(probes, list):
-                    ent["probes"] = [str(p).strip() for p in probes if str(p).strip()]
+                    names = src["entities"].get("probe_names")
+                    names = names if isinstance(names, list) else []
+                    kept = [(str(p).strip(), str(names[i]).strip() if i < len(names) and names[i] else "")
+                            for i, p in enumerate(probes) if str(p).strip()][:MAX_PROBES]
+                    ent["probes"] = [k[0] for k in kept]
+                    ent["probe_names"] = [k[1] for k in kept]
                 s["entities"] = ent
             patch["source"] = s
         tg = body.get("telegram") or {}
@@ -122,6 +127,18 @@ class Service:
             settings.update(patch)
             self._engine = None          # pick up a new notifier
         return self.settings_view()
+
+    def probe_sources(self) -> list[dict]:
+        """Which physical sensor each probe number is: the entity behind it and the name given to it in Settings."""
+        ent = (self.cfg().get("source") or {}).get("entities") or {}
+        names = ent.get("probe_names") or []
+        out = []
+        for i, entity in enumerate(ent.get("probes") or []):
+            name = names[i] if i < len(names) and names[i] else ""
+            if not name:                           # no name given: make the entity id readable
+                name = str(entity).split(".", 1)[-1].replace("_", " ")
+            out.append({"no": i + 1, "entity": entity, "name": name})
+        return out
 
     def test_source(self) -> dict:
         try:
@@ -377,6 +394,8 @@ class Service:
                 "plan": [{"at": s.at.isoformat(timespec="minutes"), "step": s.what} for s in p.steps],
                 "recipe": recipe.raw,
             }
+            by_no = {s["no"]: s["name"] for s in self.probe_sources()}
+            meta["probe_sources"] = {n: by_no[n] for n in numbers if n in by_no}    # which sensor each probe was
             if recipe.rub:                       # the exact rub used, so the cook still knows it after the rub changes
                 found = recipes.find_rub(recipe.rub, os.path.dirname(recipe.path), self.recipe_dirs)
                 view = self._rub_view(found) if found else None
@@ -499,9 +518,15 @@ class Service:
             r = self.last_reading
             if r is not None and (_now() - r.at).total_seconds() > 120:
                 r = None
+            sources_ = self.probe_sources()
+            cook = e.overview(_now(), r) if e else None
+            if cook:
+                used = {int(k): v for k, v in (e.meta.get("probe_sources") or {}).items()}
+                now_names = {s["no"]: s["name"] for s in sources_}
+                for p in cook["probes"]:
+                    p["source"] = used.get(p["no"]) or now_names.get(p["no"])
             return {"now": _now().isoformat(timespec="seconds"), "reading": _reading_dict(r),
-                    "source_error": self.last_error,
-                    "cook": e.overview(_now(), r) if e else None}
+                    "source_error": self.last_error, "probe_sources": sources_, "cook": cook}
 
     def status_text(self) -> str:
         with self.lock:
@@ -550,7 +575,8 @@ class Service:
         meta = {k: v for k, v in m.items() if k != "recipe"}
         numbers = [int(n) for n in (m.get("probes") or [m.get("probe", 1)])]
         labels = {int(k): v for k, v in (m.get("probe_labels") or {}).items()}
-        meta["probes"] = [{"no": n, "label": labels.get(n) or f"probe {n}"} for n in numbers]
+        srcs = {int(k): v for k, v in (m.get("probe_sources") or {}).items()}
+        meta["probes"] = [{"no": n, "label": labels.get(n) or f"probe {n}", "source": srcs.get(n)} for n in numbers]
         return {"meta": meta, "events": store.events(cook_id), "curve": curve}
 
     # --- background runner ------------------------------------------------------------------------

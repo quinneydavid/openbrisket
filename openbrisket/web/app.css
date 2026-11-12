@@ -186,6 +186,18 @@ a.btn:hover { background: var(--btn-hover); text-decoration: none; }
 a.btn.primary { background: var(--primary); border-color: transparent; color: var(--primary-ink); }
 a.btn.primary:hover { background: var(--primary-hover); }
 .push { margin-left: auto; }
+code { font: 12px var(--mono); background: var(--subtle); border: 1px solid var(--border-soft); border-radius: 4px; padding: 1px 5px; }
+details.api { border-top: 1px solid var(--border-soft); }
+details.api:first-of-type { border-top: 0; }
+details.api > summary { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; padding: 9px 16px; font-size: 14px; color: var(--text); list-style: none; }
+details.api > summary::-webkit-details-marker { display: none; }
+details.api > summary:hover { background: var(--subtle); }
+details.api > summary code { background: transparent; border: 0; padding: 0; font-size: 13px; font-weight: 600; }
+details.api > .body { padding: 4px 16px 16px; }
+details.api pre { margin-top: 4px; padding: 12px; background: var(--subtle); border-radius: 6px; max-height: 420px; overflow: auto; }
+.verb { font: 600 11px var(--mono); padding: 2px 0; width: 44px; text-align: center; border-radius: 4px; color: #fff; flex: none; }
+.verb.get { background: var(--link); }
+.verb.post { background: var(--primary); }
 h1.section { margin-top: 32px; }
 .block-label { margin-top: 16px; }
 .ing-rows { display: grid; gap: 6px; }
@@ -215,7 +227,11 @@ input:disabled { background: var(--subtle); color: var(--text-3); cursor: not-al
 .hint { color: var(--text-2); font-size: 12px; margin: 4px 0 0; }
 .photo-hint { padding: 8px 16px 12px; border-top: 1px solid var(--border-soft); margin: 0; }
 .probe-pick { display: grid; gap: 6px; }
-.probe-pick .row { display: grid; grid-template-columns: 96px 78px 1fr; gap: 8px; align-items: center; }
+.probe-pick .row { display: grid; grid-template-columns: minmax(150px, 230px) 78px 1fr; gap: 8px; align-items: center; }
+.src { font-size: 12px; margin-left: 6px; }
+.probes .src { display: block; margin-left: 0; font-size: 11px; line-height: 1.2; }
+.probes li { align-items: flex-start; }
+.probes li .sw { margin-top: 8px; }
 .probe-pick label { margin: 0; font-weight: 400; display: inline-flex; gap: 6px; align-items: center; font-size: 14px; }
 .msg { margin-top: 12px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--subtle); overflow-wrap: anywhere; }
 .msg.err { border-color: var(--critical); }

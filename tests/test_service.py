@@ -286,7 +286,7 @@ class ServiceTests(Base):
         self.service.read_now()
         probes = self.service.status()["cook"]["probes"]
         self.assertEqual([(x["no"], x["label"]) for x in probes], [(1, "flat"), (2, "probe 2")])
-        self.assertEqual(self.service.cook(started["cook"])["meta"]["probes"][0], {"no": 1, "label": "flat"})
+        self.assertEqual(self.service.cook(started["cook"])["meta"]["probes"][0]["label"], "flat")
 
     def test_runner_ticks_the_open_cook(self):
         self.service.start("texas-brisket", 5.4, self.serve_at)
@@ -311,6 +311,20 @@ class ServiceTests(Base):
         self.assertNotIn("b0t", json.dumps(view))
         self.assertTrue(view["source"]["token_set"])
         self.assertEqual(view["source"]["entities"]["probes"], ["sensor.a", "sensor.c"])
+        self.assertEqual(view["source"]["entities"]["probe_names"], ["", ""])
+        self.service.save_settings({"source": {"entities": {"probes": ["sensor.fan_probe_1", "", "sensor.thermo_probe_1"],
+                                                            "probe_names": ["Fan controller 1", "skipped", ""]}}})
+        self.assertEqual(self.service.probe_sources(), [
+            {"no": 1, "entity": "sensor.fan_probe_1", "name": "Fan controller 1"},
+            {"no": 2, "entity": "sensor.thermo_probe_1", "name": "thermo probe 1"}])    # unnamed: readable entity id
+        started = self.service.start("texas-brisket", 5.4, self.serve_at, [1, 2], {"1": "flat"})
+        self.service.read_now()
+        st = self.service.status()
+        self.assertEqual([p["source"] for p in st["cook"]["probes"]], ["Fan controller 1", "thermo probe 1"])
+        self.assertEqual(st["probe_sources"][0]["name"], "Fan controller 1")
+        self.assertEqual(self.service.cook(started["cook"])["meta"]["probes"][0],
+                         {"no": 1, "label": "flat", "source": "Fan controller 1"})
+        self.service.close(abandon=True)
         self.assertEqual(view["poll_seconds"], 3)
         self.service.save_settings({"source": {"url": "http://ha2:8123", "token": ""}})
         cfg = settings.load()
@@ -423,6 +437,23 @@ class HttpTests(Base):
         self.assertEqual(self.req("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "ping"}, token=None)[0], 401)
         self.assertEqual(self.req("/api/settings", token="wrong")[0], 401)
         self.assertEqual(self.req("/../../etc/passwd", token=None)[0], 404)
+
+    def test_every_route_is_in_the_api_description(self):
+        import re
+        from openbrisket import apidoc
+        code, spec, _ = self.req("/api/openapi.json", token=None)          # public, like /healthz
+        self.assertEqual((code, spec["openapi"][:3]), (200, "3.0"))
+        with open(os.path.join(ROOT, "openbrisket", "server.py")) as f:
+            src = f.read()
+        served = set(re.findall(r'path == "(/[a-z/\-.]+)"', src))
+        served |= {"/api/cooks/{id}", "/api/history/{kind}/{id}"}           # the two routes matched by prefix
+        listed = {p for _m, p, *_ in apidoc.ENDPOINTS}
+        self.assertEqual(served - listed, set(), "a route the server answers is missing from apidoc.ENDPOINTS")
+        self.assertEqual(listed - served, set(), "apidoc.ENDPOINTS lists a route the server does not answer")
+        self.assertNotIn("security", spec["paths"]["/healthz"]["get"])
+        self.assertEqual(spec["paths"]["/api/status"]["get"]["security"], [{"token": []}])
+        self.assertEqual(spec["paths"]["/api/cooks/{id}"]["get"]["parameters"][0]["name"], "id")
+        self.assertIn("example", spec["paths"]["/api/plan"]["post"]["requestBody"]["content"]["application/json"])
 
     def test_api_and_mcp_over_http(self):
         self.assertIsNone(self.req("/api/status")[1]["cook"])

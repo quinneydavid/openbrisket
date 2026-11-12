@@ -11,7 +11,7 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, mcp
+from . import __version__, apidoc, mcp
 from .service import Service, ServiceError
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -71,6 +71,8 @@ def make_handler(service: Service):
             path = self.path.split("?", 1)[0]
             if path == "/healthz":
                 return self._json({"ok": True, "version": __version__})
+            if path == "/api/openapi.json":
+                return self._json(apidoc.spec())
             if path in STATIC:
                 name, ctype = STATIC[path]
                 with open(os.path.join(WEB_DIR, name), "rb") as f:

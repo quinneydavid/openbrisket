@@ -103,7 +103,10 @@ using the terminal alone.
   save is a YAML file in your own library (`recipes/` in the data folder, a git repository), with a commit for
   every change. The built-in ones are read-only; "Customise" makes your copy.
 - **History**: a year of cooks at a glance, and each past cook with its curve, events and score.
-- **Settings**: readings, Telegram, and the address and token for agents.
+- **API**: every endpoint with a Send button. The same list is served as an OpenAPI 3 document at
+  `/api/openapi.json`.
+- **Settings**: readings (including a name for each probe, so you know which physical probe is which),
+  Telegram, and the address and token for agents.
 
 The header has a light / dark / auto switch. The colours are GitHub's open-source Primer palette;
 OpenBrisket is not affiliated with GitHub.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+- An API tab: every endpoint with its description, an editable example body and a Send button, drawn from an
+  OpenAPI 3 document served at `/api/openapi.json` (which also opens in Swagger and similar tools).
+- Probes say which physical sensor they are. Give each probe a name in Settings ("Fan controller 1",
+  "Thermometer 3"); it is shown in the probe picker, beside each probe on the cook page, and kept with the cook.
+
 ## 0.7.0
 
 - Change history you can read: History on a recipe or rub lists every version with the reason and exactly which

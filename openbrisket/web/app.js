@@ -258,7 +258,7 @@ function loginView() {
   input.focus();
 }
 
-function startForm(recipes, reading) {
+function startForm(recipes, reading, sources) {
   const valid = recipes.filter((r) => r.valid);
   const sel = h("select", { id: "f-recipe" }, valid.map((r) => h("option", { value: r.id }, `${r.name} v${r.version}`)));
   const weight = h("input", { id: "f-weight", type: "number", step: "0.1", min: "0.1", inputmode: "decimal", placeholder: "5.4" });
@@ -268,7 +268,9 @@ function startForm(recipes, reading) {
     const no = i + 1;
     const box = h("input", { type: "checkbox", id: "f-probe-" + no, checked: no === 1 });
     const name = h("input", { type: "text", id: "f-probe-name-" + no, placeholder: "name, e.g. flat", "aria-label": `Name for probe ${no}`, maxlength: "24" });
-    return { no, box, name, row: h("div", { class: "row" }, h("label", { for: "f-probe-" + no }, box, "Probe " + no),
+    const src = (sources || []).find((x) => x.no === no);
+    return { no, box, name, row: h("div", { class: "row" }, h("label", { for: "f-probe-" + no, title: src ? src.entity : "" }, box, "Probe " + no,
+        src ? h("span", { class: "muted src" }, src.name) : null),
       h("span", { class: "num muted" }, temp === null || temp === undefined ? "no reading" : deg(temp, 1)), name) };
   });
   const out = h("div", {});
@@ -325,7 +327,8 @@ function cookView(st, detail) {
     h("div", { class: "tile" }, h("div", { class: "k" }, c.probes.filter((p) => p.in_meat).length > 1 ? `Meat (coldest of ${c.probes.filter((p) => p.in_meat).length})` : `Meat (${(c.probes.find((p) => p.in_meat) || c.probes[0]).label})`),
       h("div", { class: "v" }, c.meat_c !== null && c.meat_c !== undefined ? c.meat_c.toFixed(1) : "–", h("small", {}, " °C")),
       h("div", { class: "d" }, c.hold ? `holding, floor ${c.hold.floor_c} °C` : `target ${t.meat_c}`),
-      c.meat_on_at || c.probes.length > 1 ? h("ul", { class: "probes" }, c.probes.slice(0, 6).map((p, i) => h("li", { class: p.in_meat ? "" : "pulled" }, h("span", { class: "sw s" + (i + 1) }), cap(p.label),
+      c.meat_on_at || c.probes.length > 1 ? h("ul", { class: "probes" }, c.probes.slice(0, 6).map((p, i) => h("li", { class: p.in_meat ? "" : "pulled", title: p.source ? `Probe ${p.no}: ${p.source}` : `Probe ${p.no}` }, h("span", { class: "sw s" + (i + 1) }),
+        h("span", {}, cap(p.label), p.source ? h("span", { class: "muted src" }, p.source) : null),
         h("span", { class: "num" }, deg(p.temp_c, 1)),
         c.meat_on_at ? h("button", { type: "button", class: "mini", title: p.in_meat ? "Stop counting this probe (it is out of the meat)" : "Count this probe again (it is back in the meat)",
           onclick: (ev) => act(ev.target, async () => { await api("/api/probe", { probe: p.no, in_meat: !p.in_meat }); await refresh(true); }) }, p.in_meat ? "out" : "back in") : null))) : null,
@@ -401,7 +404,7 @@ async function renderCook(force) {
     if (!force && main.querySelector("#f-recipe")) return;      // do not wipe a form being filled in
     show(h("h1", {}, "No cook is open"),
       st.source_error ? msg("No readings: " + st.source_error + " Check Settings.", "err") : null,
-      startForm(recipes, st.reading));
+      startForm(recipes, st.reading, st.probe_sources));
     return;
   }
   const now = Date.now();
@@ -608,6 +611,7 @@ async function renderHistory(id) {
     const m = d.meta, res = m.result || {};
     show(h("p", { class: "sub" }, h("a", { href: "#history" }, "← History")),
       h("div", { class: "title-row" }, h("h1", {}, h("b", {}, m.id)), h("span", { class: "badge " + m.status }, m.status === "done" ? "Merged" : m.status === "open" ? "Open" : "Abandoned")),
+      m.probes && m.probes.some((p) => p.source) ? h("p", { class: "sub" }, "Probes: " + m.probes.map((p) => `${p.label} = ${p.source || "probe " + p.no}`).join(", ")) : null,
       h("p", { class: "sub mono" }, `${m.recipe_name} v${m.recipe_version}` + (m.rub ? ` · rub ${m.rub.name} v${m.rub.version}` : "") + (m.weight_kg ? ` · ${m.weight_kg} kg` : "") + ` · opened ${fullDate(m.opened_at)}`),
       box("Result", h("div", { class: "body" }, h("dl", { class: "kv" },
         h("dt", {}, "Score"), h("dd", {}, res.score !== undefined ? `${res.score} / 10` : "–"),
@@ -628,16 +632,62 @@ async function renderHistory(id) {
       h("div", { class: "empty" }, "No cooks yet. Open one from the Cook tab.")));
 }
 
+// The API tab: every endpoint from the OpenAPI document, each with a Send button that calls this server.
+async function renderApi() {
+  const spec = await (await fetch("/api/openapi.json")).json();
+  const groups = {};
+  for (const [path, ops] of Object.entries(spec.paths)) {
+    for (const [method, op] of Object.entries(ops)) (groups[op.tags[0]] = groups[op.tags[0]] || []).push({ path, method: method.toUpperCase(), op });
+  }
+  const row = (e) => {
+    const body = e.op.requestBody ? JSON.stringify(e.op.requestBody.content["application/json"].example, null, 2) : null;
+    const params = (e.op.parameters || []).map((p) => h("input", { type: "text", class: "api-param", "data-name": p.name, placeholder: p.name, "aria-label": p.name }));
+    const input = body !== null ? h("textarea", { rows: String(Math.min(12, body.split("\n").length + 1)), spellcheck: "false", "aria-label": "Request body" }, body) : null;
+    const out = h("div", {});
+    const send = h("button", { type: "button", class: e.method === "GET" ? "" : "primary", onclick: async () => {
+      let path = e.path;
+      for (const p of params) path = path.replace("{" + p.dataset.name + "}", encodeURIComponent(p.value.trim()));
+      if (path.includes("{")) { out.replaceChildren(msg("Fill in " + params.map((p) => p.dataset.name).join(", ") + " first.", "err")); return; }
+      let payload;
+      if (input) { try { payload = JSON.parse(input.value || "{}"); } catch (err) { out.replaceChildren(msg("The body is not valid JSON.", "err")); return; } }
+      send.disabled = true;
+      const started = performance.now();
+      try {
+        const opt = { method: e.method, headers: e.op.security ? { Authorization: "Bearer " + (token || "") } : {} };
+        if (input) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(payload); }
+        const res = await fetch(path, opt);
+        const text = await res.text();
+        let pretty = text;
+        try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (err) { /* not JSON */ }
+        if (pretty.length > 20000) pretty = pretty.slice(0, 20000) + "\n… (cut; " + text.length + " characters in all)";
+        out.replaceChildren(h("p", { class: "hint" }, `${res.status} ${res.statusText || ""} in ${Math.round(performance.now() - started)} ms`), h("pre", {}, pretty || "(empty)"));
+      } catch (err) { out.replaceChildren(msg(String(err), "err")); }
+      send.disabled = false;
+    } }, "Send");
+    return h("details", { class: "api" }, h("summary", {}, h("span", { class: "verb " + e.method.toLowerCase() }, e.method), h("code", {}, e.path), h("span", { class: "muted" }, e.op.summary),
+      e.op.security ? null : h("span", { class: "badge" }, "no token")),
+      h("div", { class: "body" }, params.length ? h("div", { class: "fields" }, params.map((p) => h("div", {}, h("label", {}, p.dataset.name), p))) : null,
+        input ? [h("label", { class: params.length ? "block-label" : "" }, "Body"), input] : null,
+        e.method !== "GET" && e.path !== "/api/plan" && e.path !== "/mcp" ? h("p", { class: "hint" }, "This acts on your real data.") : null,
+        h("div", { class: "actions" }, send), out));
+  };
+  show(h("div", { class: "title-row" }, h("h1", {}, "API"), h("span", { class: "badge" }, "v" + spec.info.version), h("span", { class: "push" }),
+      h("a", { class: "btn", href: "/api/openapi.json", target: "_blank", rel: "noopener" }, "openapi.json")),
+    h("p", { class: "sub" }, "Everything the page does goes through these calls. Send a token as ", h("code", {}, "Authorization: Bearer <access token>"), ". The OpenAPI document opens in Swagger and similar tools."),
+    ["Cook", "History", "Recipes", "Settings", "Agents"].filter((g) => groups[g]).map((g) => box(g, groups[g].map(row))));
+}
+
 async function renderSettings() {
   const v = await api("/api/settings");
   const e = v.source.entities || {};
   const f = (id, label, value, extra) => h("div", extra && extra.wide ? { class: "field-wide" } : {}, h("label", { for: id }, label),
     h("input", { id, type: (extra && extra.type) || "text", value: value || "", placeholder: (extra && extra.placeholder) || "", autocomplete: "off" }));
   const val = (id) => document.getElementById(id).value.trim();
+  const probeLines = () => val("s-probes").split("\n").map((l) => l.split("|").map((x) => x.trim())).filter((l) => l[0]).slice(0, 9).map((l) => [l[0], l[1] || ""]);
   const save = (ev) => act(ev.target, async () => {
     await api("/api/settings", {
       source: { type: "homeassistant", url: val("s-url"), token: val("s-token"),
-        entities: { pit: val("s-pit"), probes: val("s-probes").split(/\s+/).filter(Boolean).slice(0, 9), fan: val("s-fan"), fan_on: val("s-fanon"), pit_target: val("s-target"), connected: val("s-conn"), ambient: val("s-amb"), humidity: val("s-hum"), rain: val("s-rain") } },
+        entities: { pit: val("s-pit"), probes: probeLines().map((l) => l[0]), probe_names: probeLines().map((l) => l[1]), fan: val("s-fan"), fan_on: val("s-fanon"), pit_target: val("s-target"), connected: val("s-conn"), ambient: val("s-amb"), humidity: val("s-hum"), rain: val("s-rain") } },
       telegram: { bot_token: val("s-bot"), chat_id: val("s-chat") }, poll_seconds: Number(val("s-poll")) || 15 });
     return "Saved.";
   });
@@ -646,9 +696,9 @@ async function renderSettings() {
       f("s-url", "Home Assistant address", v.source.url, { placeholder: "http://homeassistant.local:8123" }),
       f("s-token", "Long-lived access token", "", { type: "password", placeholder: v.source.token_set ? "saved; leave empty to keep" : "not set" }),
       f("s-pit", "Pit temperature entity", e.pit), f("s-conn", "Connected entity", e.connected),
-      h("div", { class: "field-wide" }, h("label", { for: "s-probes" }, "Food probe entities, one per line (up to 9)"),
-        h("textarea", { id: "s-probes", rows: "6", spellcheck: "false" }, (e.probes || []).join("\n")),
-        h("p", { class: "hint" }, "The order here is the probe number: the first line is probe 1.")),
+      h("div", { class: "field-wide" }, h("label", { for: "s-probes" }, "Food probes, one per line (up to 9): entity | name"),
+        h("textarea", { id: "s-probes", rows: "9", spellcheck: "false" }, (e.probes || []).map((p, i) => p + ((e.probe_names || [])[i] ? " | " + e.probe_names[i] : "")).join("\n")),
+        h("p", { class: "hint" }, "The order is the probe number: the first line is probe 1. The name after the bar says which physical probe it is, for example “Fan controller 1” or “Thermometer 3”, and is shown wherever the probe is.")),
       f("s-fan", "Fan output entity", e.fan), f("s-fanon", "Fan switched on entity", e.fan_on), f("s-target", "Pit target entity", e.pit_target),
       f("s-amb", "Outdoor temperature entity (optional)", e.ambient), f("s-hum", "Outdoor humidity entity (optional)", e.humidity),
       f("s-rain", "Rain entity (optional)", e.rain),
@@ -678,6 +728,7 @@ async function refresh(force) {
     if (tab === "recipes") await renderRecipes(arg ? decodeURIComponent(arg) : null);
     else if (tab === "history") await renderHistory(arg ? decodeURIComponent(arg) : null);
     else if (tab === "settings") await renderSettings();
+    else if (tab === "api") await renderApi();
     else await renderCook(force);
   } catch (e) {
     if (e.message === "401") return loginView();

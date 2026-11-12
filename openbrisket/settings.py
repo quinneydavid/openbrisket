@@ -21,6 +21,7 @@ source:
       - sensor.bbq_reader_probe_1
       - sensor.bbq_reader_probe_2
       - sensor.bbq_reader_probe_3
+    probe_names: []    # optional, same order: which physical probe each one is, e.g. "Fan controller 1"
     fan: sensor.bbq_reader_fan_output
     fan_on: binary_sensor.bbq_reader_fan_switched_on
     pit_target: sensor.bbq_reader_pit_target
