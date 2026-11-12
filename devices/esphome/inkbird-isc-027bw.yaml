@@ -1,0 +1,108 @@
+# Inkbird ISC-027BW fan controller -> OpenBrisket standard values.
+# Use as an ESPHome package (see bbq-reader.example.yaml). Read-only: nothing here writes to the device.
+#
+# Protocol (service fff0), polled every 3 s with plain reads. Do not subscribe to notifications:
+# the controller drops the connection after a few seconds if you do.
+#   fff2  bytes 0-7  four probes, Fahrenheit x10, uint16 little-endian (probe 0 = pit)
+#         byte 8     fan output, percent
+#   fff3  bytes 0-1  pit target, Fahrenheit x10, uint16 little-endian
+#   fff1  byte 0     fan switched on
+# The controller accepts ONE Bluetooth connection. Keep the Inkbird app on Wi-Fi (turn off its
+# Bluetooth permission on your phone) or the app and this reader lock each other out.
+substitutions:
+  isc027bw_mac: "00:00:00:00:00:00"
+
+ble_client:
+  - mac_address: ${isc027bw_mac}
+    id: isc027bw
+
+binary_sensor:
+  - platform: template
+    name: Fan Controller Connected
+    device_class: connectivity
+    lambda: 'return id(isc027bw).connected();'
+  - platform: template
+    name: Fan Switched On
+    id: bbq_fan_on
+
+sensor:
+  - platform: ble_client
+    ble_client_id: isc027bw
+    type: characteristic
+    id: isc027bw_fff2
+    internal: true
+    service_uuid: "fff0"
+    characteristic_uuid: "fff2"
+    update_interval: 3s
+    lambda: |-
+      if (x.size() < 9) return NAN;
+      auto c = [&](int i) -> float {
+        uint16_t v = x[i * 2] | (x[i * 2 + 1] << 8);
+        return (v > 0 && v < 0x1770) ? (v / 10.0f - 32.0f) * 5.0f / 9.0f : NAN;
+      };
+      id(bbq_pit).publish_state(c(0));
+      id(bbq_probe1).publish_state(c(1));
+      id(bbq_probe2).publish_state(c(2));
+      id(bbq_probe3).publish_state(c(3));
+      id(bbq_fan).publish_state(x[8]);
+      return c(0);
+  - platform: ble_client
+    ble_client_id: isc027bw
+    type: characteristic
+    name: Pit Target
+    service_uuid: "fff0"
+    characteristic_uuid: "fff3"
+    update_interval: 3s
+    unit_of_measurement: "°C"
+    device_class: temperature
+    accuracy_decimals: 1
+    lambda: |-
+      if (x.size() < 2) return NAN;
+      uint16_t v = x[0] | (x[1] << 8);
+      return (v > 0 && v < 0x1770) ? (v / 10.0f - 32.0f) * 5.0f / 9.0f : NAN;
+  - platform: ble_client
+    ble_client_id: isc027bw
+    type: characteristic
+    id: isc027bw_fff1
+    internal: true
+    service_uuid: "fff0"
+    characteristic_uuid: "fff1"
+    update_interval: 3s
+    lambda: |-
+      if (x.size() < 1) return NAN;
+      id(bbq_fan_on).publish_state(x[0] != 0);
+      return x[0];
+  - platform: template
+    name: Pit Temperature
+    id: bbq_pit
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: template
+    name: Probe 1
+    id: bbq_probe1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: template
+    name: Probe 2
+    id: bbq_probe2
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: template
+    name: Probe 3
+    id: bbq_probe3
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: template
+    name: Fan Output
+    id: bbq_fan
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 0

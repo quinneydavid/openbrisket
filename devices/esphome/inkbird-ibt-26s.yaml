@@ -1,0 +1,85 @@
+# Inkbird IBT-26S six-probe thermometer -> extra probe temperatures.
+# Use as an ESPHome package (see bbq-reader.example.yaml). Read-only: nothing here writes to the device.
+#
+# Protocol (service ff00, characteristic ff01, notifications): 14 bytes, six probes as
+# Fahrenheit x10, uint16 little-endian; 0x7FFE = no probe plugged in.
+# Known limit: the thermometer ends the connection about 31 s after each connect and the reader
+# reconnects, so readings arrive in bursts. Fine for meat temperatures, which move slowly.
+substitutions:
+  ibt26s_mac: "00:00:00:00:00:00"
+
+ble_client:
+  - mac_address: ${ibt26s_mac}
+    id: ibt26s
+
+binary_sensor:
+  - platform: template
+    name: Thermometer Connected
+    device_class: connectivity
+    lambda: 'return id(ibt26s).connected();'
+
+sensor:
+  - platform: ble_client
+    ble_client_id: ibt26s
+    type: characteristic
+    id: ibt26s_ff01
+    internal: true
+    service_uuid: "ff00"
+    characteristic_uuid: "ff01"
+    notify: true
+    update_interval: 10s
+    lambda: |-
+      if (x.size() < 12) return NAN;
+      auto c = [&](int i) -> float {
+        uint16_t v = x[i * 2] | (x[i * 2 + 1] << 8);
+        return (v > 0 && v < 0x1770) ? (v / 10.0f - 32.0f) * 5.0f / 9.0f : NAN;
+      };
+      id(ibt_p1).publish_state(c(0));
+      id(ibt_p2).publish_state(c(1));
+      id(ibt_p3).publish_state(c(2));
+      id(ibt_p4).publish_state(c(3));
+      id(ibt_p5).publish_state(c(4));
+      id(ibt_p6).publish_state(c(5));
+      return c(0);
+  - platform: template
+    name: Thermometer Probe 1
+    id: ibt_p1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: template
+    name: Thermometer Probe 2
+    id: ibt_p2
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: template
+    name: Thermometer Probe 3
+    id: ibt_p3
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: template
+    name: Thermometer Probe 4
+    id: ibt_p4
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: template
+    name: Thermometer Probe 5
+    id: ibt_p5
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+  - platform: template
+    name: Thermometer Probe 6
+    id: ibt_p6
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1

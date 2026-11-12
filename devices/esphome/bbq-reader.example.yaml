@@ -1,0 +1,34 @@
+# An ESP32 that sits next to the smoker, connects to the thermometers over Bluetooth and publishes
+# the OpenBrisket standard values to Home Assistant. It is NOT a Bluetooth proxy, so it does not
+# take part in presence or room tracking.
+substitutions:
+  isc027bw_mac: "AA:BB:CC:DD:EE:01"     # your fan controller's Bluetooth address
+  ibt26s_mac: "AA:BB:CC:DD:EE:02"       # your thermometer's Bluetooth address
+
+packages:
+  fan_controller: !include inkbird-isc-027bw.yaml
+  thermometer: !include inkbird-ibt-26s.yaml      # remove this line if you only have the fan controller
+
+esphome:
+  name: bbq-reader
+  friendly_name: BBQ Reader
+esp32:
+  board: esp32dev          # classic ESP32 (WROOM-32) recommended
+  framework:
+    type: esp-idf
+logger:
+  level: INFO
+api:
+  encryption:
+    key: !secret bbq_reader_api_key
+ota:
+  - platform: esphome
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 60ms
+    active: false

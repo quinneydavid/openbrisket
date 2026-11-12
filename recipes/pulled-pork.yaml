@@ -1,0 +1,31 @@
+apiVersion: openbrisket/v1
+kind: Recipe
+name: pulled-pork
+version: 1.0.0
+cut: pork-shoulder-bone-in
+description: Bone-in pork shoulder taken to pulling temperature, wrapped in foil once the bark is set.
+rub: rubs/sweet-pork.yaml
+
+pit:
+  target_c: 121
+  tolerance_c: 10
+
+meat:
+  target_c: 96
+
+timing:
+  hours_per_kg: 3.3
+  fridge_out_min: 45
+  dry_brine_hours: 12
+
+stall:
+  from_c: 65
+  to_c: 77
+
+wrap:
+  at_c: 74
+  material: foil
+
+rest:
+  min_minutes: 45
+  ideal_minutes: 90

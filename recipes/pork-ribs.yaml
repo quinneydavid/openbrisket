@@ -1,0 +1,26 @@
+apiVersion: openbrisket/v1
+kind: Recipe
+name: pork-ribs
+version: 1.0.0
+cut: pork-ribs-spare
+description: Spare ribs, unwrapped. Sized by time, not weight; done when a rack bends and the bark cracks.
+rub: rubs/sweet-pork.yaml
+
+pit:
+  target_c: 125
+  tolerance_c: 10
+
+meat:
+  target_c: 93          # probe between the bones, away from them
+
+timing:
+  hours_fixed: 5.5
+  fridge_out_min: 30
+
+stall:
+  from_c: 65
+  to_c: 77
+
+rest:
+  min_minutes: 10
+  ideal_minutes: 20

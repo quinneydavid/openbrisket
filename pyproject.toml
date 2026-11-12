@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openbrisket"
+version = "0.1.0"
+description = "PitOps for your smoker: recipes as code, a cook log in git, and notes when the meat needs you."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "David Quinney"}]
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6"]
+
+[project.scripts]
+openbrisket = "openbrisket.cli:main"
+
+[tool.setuptools]
+packages = ["openbrisket"]

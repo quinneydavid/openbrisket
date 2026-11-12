@@ -1,0 +1,31 @@
+apiVersion: openbrisket/v1
+kind: Recipe
+name: texas-brisket
+version: 1.0.0
+cut: beef-brisket-packer
+description: Whole packer brisket, salt and pepper, wrapped in butcher paper through the stall.
+rub: rubs/dalmatian.yaml
+
+pit:
+  target_c: 121
+  tolerance_c: 10
+
+meat:
+  target_c: 95          # a guide; it is done when the probe slides in like butter
+
+timing:
+  hours_per_kg: 2.7     # at the pit temperature above, wrapped at the wrap point
+  fridge_out_min: 60
+  dry_brine_hours: 12
+
+stall:
+  from_c: 65
+  to_c: 77
+
+wrap:
+  at_c: 74
+  material: butcher paper
+
+rest:
+  min_minutes: 60
+  ideal_minutes: 120

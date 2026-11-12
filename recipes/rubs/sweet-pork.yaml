@@ -1,0 +1,11 @@
+apiVersion: openbrisket/v1
+kind: Rub
+name: sweet-pork
+description: Sweet paprika rub for ribs and shoulder. High in sugar; keep the pit under 135 C or it scorches.
+ingredients:
+  - {name: brown sugar, parts: 4, kind: sugar}
+  - {name: paprika, parts: 3}
+  - {name: kosher salt, parts: 2, kind: salt}
+  - {name: black pepper, parts: 1}
+  - {name: garlic powder, parts: 1}
+  - {name: onion powder, parts: 1}

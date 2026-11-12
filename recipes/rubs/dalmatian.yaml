@@ -1,0 +1,7 @@
+apiVersion: openbrisket/v1
+kind: Rub
+name: dalmatian
+description: Salt and pepper, the central Texas standard. No sugar, so it tolerates a hot pit.
+ingredients:
+  - {name: coarse black pepper (16 mesh), parts: 2}
+  - {name: kosher salt, parts: 1, kind: salt}
