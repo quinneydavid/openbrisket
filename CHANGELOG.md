@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- Write your own recipes and rubs on the Recipes tab: forms for the numbers and the ingredients, saved as YAML
+  files in your own library with a commit for every change. A changed recipe gets the next version number.
+- "Customise" a built-in recipe or rub to make your own copy, which then takes its place. Built-ins stay read-only.
+- Rubs are listed with their ingredients, shares, salt and sugar content, and which recipes use them.
+- Warnings that do not block a save: a sugary rub on a pit above 135 C, and a salty rub on top of a long dry brine.
+- New MCP tools `list_rubs`, `save_rub`, `save_recipe`, and API routes for the same.
+
 ## 0.4.0
 
 - Photo checks as data: raw meat, probe placement, smoke, bark and slice, each in a fixed vocabulary. An agent

@@ -77,7 +77,37 @@ def min_safe_c(cut: str) -> float | None:
     return floor
 
 
-def validate_recipe(doc: dict, base_dir: str | None = None) -> list[str]:
+def find_rub(rub: str, base_dir: str | None, extra_dirs: list[str] | None = None) -> str | None:
+    """Where a recipe's rub file is: next to the recipe first, then in each library folder."""
+    for d in [base_dir, *(extra_dirs or [])]:
+        if d:
+            path = os.path.normpath(os.path.join(d, rub))
+            if os.path.isfile(path):
+                return path
+    return None
+
+
+SUGAR_SCORCH_C = 135     # above this pit temperature a sugary rub darkens and turns bitter
+SUGARY = 0.25
+
+
+def warnings(doc: dict, rub_doc: dict | None) -> list[str]:
+    """Things worth knowing that do not make a recipe invalid."""
+    out: list[str] = []
+    pit = (doc.get("pit") or {}).get("target_c")
+    if rub_doc and isinstance(pit, (int, float)):
+        fr = rub_fractions(rub_doc)
+        if fr["sugar"] >= SUGARY and pit > SUGAR_SCORCH_C:
+            out.append(f"the rub is {fr['sugar']:.0%} sugar and the pit runs at {pit:g} C: above {SUGAR_SCORCH_C} C "
+                       f"sugar scorches and the bark turns bitter")
+        brine = (doc.get("timing") or {}).get("dry_brine_hours") or 0
+        if fr["salt"] >= 0.5 and brine >= 12:
+            out.append(f"the rub is {fr['salt']:.0%} salt and the recipe also dry-brines for {brine:g} h: salt the "
+                       f"meat once, not twice")
+    return out
+
+
+def validate_recipe(doc: dict, base_dir: str | None = None, rub_dirs: list[str] | None = None) -> list[str]:
     """Return every problem found in a parsed recipe document."""
     p: list[str] = []
     if not isinstance(doc, dict):
@@ -144,8 +174,8 @@ def validate_recipe(doc: dict, base_dir: str | None = None) -> list[str]:
         if not isinstance(rub, str):
             p.append("rub must be a path to a rub file")
         elif base_dir is not None:
-            rub_path = os.path.normpath(os.path.join(base_dir, rub))
-            if not os.path.isfile(rub_path):
+            rub_path = find_rub(rub, base_dir, rub_dirs)
+            if rub_path is None:
                 p.append(f"rub file not found: {rub}")
             else:
                 p.extend(f"rub {rub}: {x}" for x in validate_rub(_read(rub_path)))
@@ -216,9 +246,9 @@ def from_doc(doc: dict, path: str = "") -> Recipe:
     )
 
 
-def load_recipe(path: str) -> Recipe:
+def load_recipe(path: str, rub_dirs: list[str] | None = None) -> Recipe:
     doc = _read(path)
-    problems = validate_recipe(doc, os.path.dirname(os.path.abspath(path)))
+    problems = validate_recipe(doc, os.path.dirname(os.path.abspath(path)), rub_dirs)
     if problems:
         raise RecipeError(f"{path}: " + "; ".join(problems))
     return from_doc(doc, os.path.abspath(path))

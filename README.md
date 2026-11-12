@@ -92,7 +92,9 @@ using the terminal alone.
 - **Cook**: the open cook as a row of stages, live temperatures, the curve with the estimate drawn
   ahead, status checks, buttons for the steps you do by hand, and the commit log. Put as many probes
   in the meat as you like: the coldest one decides when it is done.
-- **Recipes**: every recipe with its numbers, rub and source file.
+- **Recipes**: every recipe and rub with its numbers and source file, and forms to write your own. What you
+  save is a YAML file in your own library (`recipes/` in the data folder, a git repository), with a commit for
+  every change. The built-in ones are read-only; "Customise" makes your copy.
 - **History**: a year of cooks at a glance, and each past cook with its curve, events and score.
 - **Settings**: readings, Telegram, and the address and token for agents.
 
@@ -121,7 +123,8 @@ and publishes those values, and explains how to add another device.
 - Cooks are written to a git repository on your own machine. Nothing is uploaded. If you want an
   off-site copy, add a remote to that repository yourself, and make it a private one.
 - Only text is stored: events, temperatures, scores. No photos.
-- Recipes are the part meant for sharing. They live in this repository and changes come as pull requests.
+- Recipes are the part meant for sharing. The built-in ones live in this repository and changes come as pull
+  requests. Your own stay in your library until you choose to share one.
 
 ## The estimate
 

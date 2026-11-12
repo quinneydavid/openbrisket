@@ -178,6 +178,17 @@ h2 { font-size: 14px; font-weight: 600; margin: 0; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 button { font: inherit; font-weight: 500; padding: 5px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--btn); color: var(--text); cursor: pointer; }
 button:hover { background: var(--btn-hover); }
+a.btn { display: inline-block; font-weight: 500; padding: 5px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--btn); color: var(--text); }
+a.btn:hover { background: var(--btn-hover); text-decoration: none; }
+a.btn.primary { background: var(--primary); border-color: transparent; color: var(--primary-ink); }
+a.btn.primary:hover { background: var(--primary-hover); }
+.push { margin-left: auto; }
+h1.section { margin-top: 32px; }
+.block-label { margin-top: 16px; }
+.ing-rows { display: grid; gap: 6px; }
+.ing { display: grid; grid-template-columns: minmax(0, 1fr) 96px 104px auto; gap: 8px; }
+@media (max-width: 560px) { .ing { grid-template-columns: 1fr 1fr; } }
+table.ingredients { max-width: 520px; }
 button.primary { background: var(--primary); border-color: transparent; color: var(--primary-ink); }
 button.primary:hover { background: var(--primary-hover); }
 button.danger { color: var(--critical); }

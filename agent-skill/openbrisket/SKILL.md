@@ -30,7 +30,9 @@ ob() { curl -sS -H "Authorization: Bearer $OPENBRISKET_TOKEN" -H "Content-Type: 
 | What | Call |
 |---|---|
 | Where the cook stands | `ob /api/status` |
-| Recipes | `ob /api/recipes` |
+| Recipes, rubs | `ob /api/recipes`, `ob /api/rubs` |
+| Save a rub | `ob /api/rubs '{"name":"coffee-chilli","ingredients":[{"name":"ground coffee","parts":2},{"name":"kosher salt","parts":2,"kind":"salt"},{"name":"brown sugar","parts":3,"kind":"sugar"}]}'` |
+| Save a recipe | `ob /api/recipes '{"name":"beef-short-ribs","cut":"beef-short-ribs","rub":"coffee-chilli","pit_target_c":135,"meat_target_c":96,"hours_fixed":8,"wrap_at_c":77,"change":"why it changed"}'` |
 | Plan without starting | `ob /api/plan '{"recipe":"texas-brisket","weight_kg":5.4,"serve_at":"2026-11-14 18:00"}'` |
 | Open a cook | `ob /api/cooks '{"recipe":"texas-brisket","weight_kg":5.4,"serve_at":"2026-11-14 18:00","probes":[1,2],"probe_labels":{"1":"flat","2":"point"}}'` |
 | Smoke test | `ob /api/smoke-test '{}'` |
@@ -54,6 +56,21 @@ Errors come back as `{"error": "..."}` with a plain sentence; pass it on.
 - `pipeline`: the stages with done / active / pending / failed.
 - `asks`: photos OpenBrisket is waiting to be shown (see Photos). Mention them when you report on the cook.
 - `checks`: each is pass, fail or pending with a one-line detail. Lead with any that fail.
+
+## Recipes and rubs
+
+The cook can dictate a recipe or a rub and you save it (`save_rub`, `save_recipe` over MCP). They are stored as
+YAML files with a commit per save.
+
+- Save the rub before the recipe that uses it.
+- Ingredients are in parts, as a ratio. Mark salt and sugar with `kind`, nothing else.
+- A recipe needs a name, a cut that starts with the meat (`beef-`, `pork-`, `lamb-`, `chicken-`, `turkey-`,
+  `duck-`, `fish-`, `sausage-`), a pit temperature, a meat target, and exactly one of `hours_per_kg` or
+  `hours_fixed`. Ask for whatever is missing; do not invent timings.
+- When changing an existing recipe, pass every field again (read it first with `list_recipes`) and put the
+  reason in `change`. The version number moves on by itself.
+- Pass on any warning in the reply, such as a sugary rub on a hot pit.
+- A save that breaks the food-safety floor is refused. Do not work around it.
 
 ## Photos
 

@@ -408,21 +408,134 @@ async function renderCook(force) {
   for (const [id, v] of Object.entries(keep)) { const el = document.getElementById(id); if (el && v) el.value = v; }
 }
 
-async function renderRecipes() {
-  const recipes = await api("/api/recipes");
-  show(h("h1", {}, "Recipes"), h("p", { class: "sub" }, "Recipes are files. To change one, edit the file and send a pull request."),
-    recipes.map((r) => !r.valid ? box(r.id, h("div", { class: "body" }, msg(r.error, "err"))) :
-      box(h("div", { class: "title-row" }, h("h2", {}, r.name), h("span", { class: "badge" }, "v" + r.version), h("span", { class: "muted mono" }, r.cut)),
-        h("div", { class: "body" }, h("p", { class: "sub" }, r.description),
+// Recipes and rubs: read them, and write your own. Everything saved here is a YAML file with a commit.
+function field(id, label, value, extra) {
+  extra = extra || {};
+  const input = extra.options
+    ? h("select", { id }, extra.options.map((o) => h("option", { value: o[0], selected: String(o[0]) === String(value ?? "") }, o[1])))
+    : h("input", { id, type: extra.type || "text", value: value ?? "", placeholder: extra.placeholder || "", step: extra.step, min: extra.min, autocomplete: "off" });
+  return h("div", extra.wide ? { class: "field-wide" } : {}, h("label", { for: id }, label), input, extra.hint ? h("p", { class: "hint" }, extra.hint) : null);
+}
+const fv = (id) => document.getElementById(id).value.trim();
+const fnum = (id) => (fv(id) === "" ? null : Number(fv(id)));
+
+function rubForm(rub) {
+  rub = rub || { name: "", description: "", ingredients: [{ name: "", parts: "", kind: "" }, { name: "", parts: "", kind: "" }, { name: "", parts: "", kind: "" }] };
+  const rows = h("div", { class: "ing-rows" });
+  const addRow = (it) => {
+    it = it || { name: "", parts: "", kind: "" };
+    const row = h("div", { class: "ing" },
+      h("input", { type: "text", class: "ing-name", value: it.name || "", placeholder: "ingredient", "aria-label": "Ingredient" }),
+      h("input", { type: "number", class: "ing-parts", value: it.parts ?? "", placeholder: "parts", step: "0.25", min: "0", inputmode: "decimal", "aria-label": "Parts" }),
+      h("select", { class: "ing-kind", "aria-label": "Kind" }, [["", "other"], ["salt", "salt"], ["sugar", "sugar"]].map((o) => h("option", { value: o[0], selected: (it.kind || "") === o[0] }, o[1]))),
+      h("button", { type: "button", "aria-label": "Remove ingredient", onclick: () => row.remove() }, "Remove"));
+    rows.append(row);
+  };
+  (rub.ingredients || []).forEach(addRow);
+  return box(rub.name ? `Edit rub: ${rub.name}` : "New rub", h("div", { class: "body" },
+    h("div", { class: "fields" }, field("r-name", "Name", rub.name, { placeholder: "coffee-chilli" }),
+      field("r-desc", "Description", rub.description, { placeholder: "what it is for, anything to watch" })),
+    h("label", { class: "block-label" }, "Ingredients, in parts"), rows,
+    h("p", { class: "hint" }, "Parts are a ratio: 2 pepper to 1 salt. Mark salt and sugar so OpenBrisket can warn about scorching and double salting."),
+    h("div", { class: "actions" },
+      h("button", { type: "button", onclick: () => addRow() }, "Add ingredient"),
+      h("button", { type: "button", class: "primary", onclick: (ev) => act(ev.target, async () => {
+        const ingredients = [...rows.querySelectorAll(".ing")].map((r) => ({ name: r.querySelector(".ing-name").value.trim(),
+          parts: r.querySelector(".ing-parts").value === "" ? "" : Number(r.querySelector(".ing-parts").value), kind: r.querySelector(".ing-kind").value }));
+        await api("/api/rubs", { name: fv("r-name"), description: fv("r-desc"), ingredients });
+        location.hash = "#recipes"; await route(); }) }, "Save rub"),
+      h("button", { type: "button", onclick: () => { location.hash = "#recipes"; } }, "Cancel"))));
+}
+
+function recipeForm(r, rubs) {
+  const fresh = !r;
+  r = r || { name: "", version: "1.0.0", cut: "", description: "", pit_target_c: 121, pit_tolerance_c: 10, meat_target_c: 95, hours_per_kg: "", hours_fixed: "",
+    fridge_out_min: 60, dry_brine_hours: "", stall_from_c: 65, stall_to_c: 77, wrap_at_c: "", wrap_material: "", rest_min_minutes: 30, rest_ideal_minutes: 60, rub: null };
+  const rubOptions = [["", "no rub"]].concat(rubs.filter((x) => x.valid).map((x) => [x.id, x.name]));
+  return box(fresh ? "New recipe" : `Edit recipe: ${r.name}`, h("div", { class: "body" },
+    !fresh && !r.own ? msg("This is a built-in recipe. Saving makes your own copy, which is then used in its place.") : null,
+    h("div", { class: "fields" },
+      field("c-name", "Name", r.name, { placeholder: "beef-short-ribs" }),
+      field("c-cut", "Cut", r.cut, { placeholder: "beef-short-ribs", hint: "Starts with the meat: beef-, pork-, lamb-, chicken-, turkey-, duck-, fish-, sausage-." }),
+      field("c-desc", "Description", r.description, { wide: true }),
+      field("c-rub", "Rub", r.rub ? r.rub.id : "", { options: rubOptions }),
+      field("c-pit", "Pit temperature, °C", r.pit_target_c, { type: "number" }),
+      field("c-tol", "Pit tolerance, ± °C", r.pit_tolerance_c, { type: "number" }),
+      field("c-meat", "Meat target, °C", r.meat_target_c, { type: "number" }),
+      field("c-perkg", "Hours per kg", r.hours_per_kg, { type: "number", step: "0.1", hint: "For cuts sized by weight. Leave empty if you fill in the next one." }),
+      field("c-fixed", "Hours, whatever the weight", r.hours_fixed, { type: "number", step: "0.25", hint: "For cuts sized by time, like ribs." }),
+      field("c-fridge", "Out of the fridge, minutes before", r.fridge_out_min, { type: "number" }),
+      field("c-brine", "Dry brine, hours before", r.dry_brine_hours, { type: "number" }),
+      field("c-stall1", "Stall from, °C", r.stall_from_c, { type: "number" }),
+      field("c-stall2", "Stall to, °C", r.stall_to_c, { type: "number" }),
+      field("c-wrap", "Wrap at, °C", r.wrap_at_c, { type: "number", hint: "Leave empty for an unwrapped cook." }),
+      field("c-wrapm", "Wrap in", r.wrap_material, { placeholder: "butcher paper" }),
+      field("c-rest1", "Rest, minimum minutes", r.rest_min_minutes, { type: "number" }),
+      field("c-rest2", "Rest, ideal minutes", r.rest_ideal_minutes, { type: "number" }),
+      fresh ? null : field("c-change", "What changed and why", "", { wide: true, placeholder: "less sugar, the bark burnt last time", hint: `Becomes the commit message. Now at version ${r.version}; a changed recipe gets the next number.` })),
+    h("div", { class: "actions" },
+      h("button", { type: "button", class: "primary", onclick: (ev) => act(ev.target, async () => {
+        const out = await api("/api/recipes", { name: fv("c-name"), version: r.version, cut: fv("c-cut"), description: fv("c-desc"), rub: fv("c-rub") || null,
+          pit_target_c: fnum("c-pit"), pit_tolerance_c: fnum("c-tol"), meat_target_c: fnum("c-meat"), hours_per_kg: fnum("c-perkg"), hours_fixed: fnum("c-fixed"),
+          fridge_out_min: fnum("c-fridge"), dry_brine_hours: fnum("c-brine"), stall_from_c: fnum("c-stall1"), stall_to_c: fnum("c-stall2"), wrap_at_c: fnum("c-wrap"),
+          wrap_material: fv("c-wrapm"), rest_min_minutes: fnum("c-rest1"), rest_ideal_minutes: fnum("c-rest2"), change: fresh ? "" : fv("c-change") });
+        if (out.warnings && out.warnings.length) { alert("Saved, with a warning:\n\n" + out.warnings.join("\n")); }
+        location.hash = "#recipes"; await route(); }) }, "Save recipe"),
+      h("button", { type: "button", onclick: () => { location.hash = "#recipes"; } }, "Cancel"))));
+}
+
+function historyButton(kind, id, holder) {
+  return h("button", { type: "button", onclick: (ev) => act(ev.target, async () => {
+    const lines = await api(`/api/history/${kind}/${encodeURIComponent(id)}`);
+    holder.replaceChildren(h("pre", {}, lines.length ? lines.join("\n") : "No saved versions yet (built-in)."));
+  }) }, "History");
+}
+function removeButton(kind, id) {
+  return h("button", { type: "button", class: "danger", onclick: (ev) => { if (confirm(`Delete your ${kind} ${id}? It stays in the file history.`)) act(ev.target, async () => {
+    await api("/api/delete", { kind, id }); await route(); }); } }, "Delete");
+}
+async function renderRecipes(arg) {
+  const [recipes, rubs] = await Promise.all([api("/api/recipes"), api("/api/rubs")]);
+  if (arg === "new-recipe") return show(recipeForm(null, rubs));
+  if (arg === "new-rub") return show(rubForm(null));
+  if (arg && arg.startsWith("edit-recipe:")) {
+    const r = recipes.find((x) => x.id === arg.slice(12));
+    return show(r && r.valid ? recipeForm(r, rubs) : msg("No such recipe.", "err"));
+  }
+  if (arg && arg.startsWith("edit-rub:")) {
+    const r = rubs.find((x) => x.id === arg.slice(9));
+    return show(r && r.valid ? [r.own ? null : msg("This is a built-in rub. Saving makes your own copy, which is then used in its place."), rubForm(r)] : msg("No such rub.", "err"));
+  }
+  const tag = (x) => h("span", { class: "badge" }, x.own ? "yours" : "built-in");
+  show(h("div", { class: "title-row" }, h("h1", {}, "Recipes"),
+      h("span", { class: "push" }), h("a", { class: "btn primary", href: "#recipes/new-recipe" }, "New recipe"), h("a", { class: "btn", href: "#recipes/new-rub" }, "New rub")),
+    h("p", { class: "sub" }, "Recipes and rubs are YAML files. Yours are saved here with a commit for every change."),
+    recipes.map((r) => { const hist = h("div", {}); return !r.valid ? box(r.id, h("div", { class: "body" }, msg(r.error, "err"), r.own ? h("div", { class: "actions" }, removeButton("recipe", r.id)) : null)) :
+      box(h("div", { class: "title-row" }, h("h2", {}, r.name), h("span", { class: "badge" }, "v" + r.version), tag(r), h("span", { class: "muted mono" }, r.cut)),
+        h("div", { class: "body" }, r.description ? h("p", { class: "sub" }, r.description) : null,
+          r.warnings.map((w) => msg("Warning: " + w, "err")),
           h("dl", { class: "kv" },
-            h("dt", {}, "Pit"), h("dd", {}, `${r.pit_target_c} °C`),
+            h("dt", {}, "Pit"), h("dd", {}, `${r.pit_target_c} °C ± ${r.pit_tolerance_c}`),
             h("dt", {}, "Meat"), h("dd", {}, `to ${r.meat_target_c} °C`),
             h("dt", {}, "Time"), h("dd", {}, r.hours_fixed ? `about ${r.hours_fixed} h` : `about ${r.hours_per_kg} h per kg`),
             h("dt", {}, "Wrap"), h("dd", {}, r.wrap_at_c ? `at ${r.wrap_at_c} °C` + (r.wrap_material ? `, ${r.wrap_material}` : "") : "not wrapped"),
-            h("dt", {}, "Rest"), h("dd", {}, `${r.rest_ideal_minutes} min`),
+            h("dt", {}, "Rest"), h("dd", {}, `${r.rest_min_minutes} to ${r.rest_ideal_minutes} min`),
             r.rub ? [h("dt", {}, "Rub"), h("dd", {}, `${r.rub.name}: ` + r.rub.ingredients.map((i) => `${i.parts} ${i.name}`).join(", ") +
-              ` (${Math.round(r.rub.sugar * 100)}% sugar, ${Math.round(r.rub.salt * 100)}% salt)`)] : null)),
-        h("details", {}, h("summary", {}, r.id + ".yaml"), h("pre", {}, r.source)))));
+              ` (${Math.round(r.rub.sugar * 100)}% sugar, ${Math.round(r.rub.salt * 100)}% salt)`)] : null),
+          h("div", { class: "actions" }, h("a", { class: "btn", href: "#recipes/edit-recipe:" + encodeURIComponent(r.id) }, r.own ? "Edit" : "Customise"),
+            historyButton("recipe", r.id, hist), r.own ? removeButton("recipe", r.id) : null), hist),
+        h("details", {}, h("summary", {}, r.id + ".yaml"), h("pre", {}, r.source))); }),
+    h("h1", { class: "section" }, "Rubs"),
+    rubs.map((r) => { const hist = h("div", {}); return !r.valid ? box(r.id, h("div", { class: "body" }, msg(r.error, "err"))) :
+      box(h("div", { class: "title-row" }, h("h2", {}, r.name), tag(r), h("span", { class: "muted" }, `${Math.round(r.sugar * 100)}% sugar, ${Math.round(r.salt * 100)}% salt`)),
+        h("div", { class: "body" }, r.description ? h("p", { class: "sub" }, r.description) : null,
+          h("div", { class: "scroll" }, h("table", { class: "ingredients" }, h("thead", {}, h("tr", {}, h("th", {}, "Ingredient"), h("th", {}, "Parts"), h("th", {}, "Share"))),
+            h("tbody", {}, r.ingredients.map((i) => h("tr", {}, h("td", {}, i.name + (i.kind ? ` (${i.kind})` : "")), h("td", {}, i.parts),
+              h("td", {}, Math.round(i.parts / r.ingredients.reduce((a, b) => a + b.parts, 0) * 100) + "%")))))),
+          h("p", { class: "hint" }, r.used_by.length ? "Used by: " + r.used_by.join(", ") : "Not used by any recipe yet."),
+          h("div", { class: "actions" }, h("a", { class: "btn", href: "#recipes/edit-rub:" + encodeURIComponent(r.id) }, r.own ? "Edit" : "Customise"),
+            historyButton("rub", r.id, hist), r.own && !r.used_by.length ? removeButton("rub", r.id) : null), hist),
+        h("details", {}, h("summary", {}, "rubs/" + r.id + ".yaml"), h("pre", {}, r.source))); }));
 }
 
 function cookGraph(cooks) {
@@ -506,9 +619,11 @@ async function renderSettings() {
 
 // ----------------------------------------------------------------------------------------- router
 async function refresh(force) {
-  const [tab, arg] = (location.hash.slice(1) || "cook").split("/");
+  const hash = location.hash.slice(1) || "cook";
+  const cut = hash.indexOf("/");
+  const tab = cut < 0 ? hash : hash.slice(0, cut), arg = cut < 0 ? null : hash.slice(cut + 1);
   try {
-    if (tab === "recipes") await renderRecipes();
+    if (tab === "recipes") await renderRecipes(arg ? decodeURIComponent(arg) : null);
     else if (tab === "history") await renderHistory(arg ? decodeURIComponent(arg) : null);
     else if (tab === "settings") await renderSettings();
     else await renderCook(force);

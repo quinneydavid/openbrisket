@@ -38,6 +38,45 @@ TOOLS = [
     {"name": "list_recipes",
      "description": "The recipes available, with pit and meat targets, timing, wrap point and rub.",
      "inputSchema": _obj({})},
+    {"name": "list_rubs",
+     "description": "The rubs available, with ingredients in parts, the share of salt and sugar, and which recipes "
+                    "use each.",
+     "inputSchema": _obj({})},
+    {"name": "save_rub",
+     "description": "Add or update one of the cook's own rubs. Stored as a YAML file with a commit per save. "
+                    "Ingredients are in parts (by volume or weight, the cook's choice, but all the same). Mark salt "
+                    "and sugar with kind so the app can warn about scorching and double salting.",
+     "inputSchema": _obj({"name": {"type": "string", "description": "Short name, e.g. coffee-chilli"},
+                          "description": {"type": "string"},
+                          "ingredients": {"type": "array", "minItems": 1, "items": _obj({
+                              "name": {"type": "string"}, "parts": {"type": "number", "exclusiveMinimum": 0},
+                              "kind": {"type": "string", "enum": ["salt", "sugar"],
+                                       "description": "Only for salt and sugar; leave out otherwise"}},
+                              ["name", "parts"])}},
+                         ["name", "ingredients"])},
+    {"name": "save_recipe",
+     "description": "Add or update one of the cook's own recipes. Stored as a YAML file with a commit per save; a "
+                    "changed recipe gets a new version number. Saving under the name of a built-in recipe makes the "
+                    "cook's own copy, which replaces it. Give exactly one of hours_per_kg or hours_fixed. The cut "
+                    "must start with the kind of meat (beef-, pork-, lamb-, chicken-, turkey-, duck-, fish-, "
+                    "sausage-); the meat target is checked against a food-safety floor for it. Temperatures in "
+                    "degrees Celsius.",
+     "inputSchema": _obj({
+         "name": {"type": "string"}, "version": {"type": "string", "description": "Default 1.0.0"},
+         "cut": {"type": "string", "description": "e.g. beef-short-ribs"}, "description": {"type": "string"},
+         "rub": {"type": "string", "description": "A rub id from list_rubs; save the rub first"},
+         "pit_target_c": {"type": "number"}, "pit_tolerance_c": {"type": "number", "description": "Default 10"},
+         "meat_target_c": {"type": "number"},
+         "hours_per_kg": {"type": "number", "description": "For cuts sized by weight"},
+         "hours_fixed": {"type": "number", "description": "For cuts sized by time, like ribs"},
+         "fridge_out_min": {"type": "number"}, "dry_brine_hours": {"type": "number"},
+         "stall_from_c": {"type": "number", "description": "Default 65"},
+         "stall_to_c": {"type": "number", "description": "Default 77"},
+         "wrap_at_c": {"type": "number", "description": "Leave out for an unwrapped cook"},
+         "wrap_material": {"type": "string"},
+         "rest_min_minutes": {"type": "number"}, "rest_ideal_minutes": {"type": "number"},
+         "change": {"type": "string", "description": "One line on what changed and why (the commit message)"}},
+         ["name", "cut", "pit_target_c", "meat_target_c"])},
     {"name": "plan_cook",
      "description": "The full timeline for a cook, worked back from the serving time, without starting anything.",
      "inputSchema": _obj({"recipe": RECIPE, "weight_kg": WEIGHT, "serve_at": SERVE}, ["recipe", "serve_at"])},
@@ -90,6 +129,12 @@ def _call(service: Service, name: str, a: dict):
         return {"summary": service.status_text(), **s}
     if name == "list_recipes":
         return [{k: v for k, v in r.items() if k != "source"} for r in service.list_recipes()]
+    if name == "list_rubs":
+        return [{k: v for k, v in r.items() if k != "source"} for r in service.list_rubs()]
+    if name == "save_rub":
+        return service.save_rub(a)
+    if name == "save_recipe":
+        return service.save_recipe(a)
     if name == "plan_cook":
         return service.plan(a.get("recipe"), a.get("weight_kg"), a.get("serve_at"))
     if name == "start_cook":

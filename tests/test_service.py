@@ -34,7 +34,8 @@ class Base(unittest.TestCase):
         src = mock.patch.object(sources, "from_settings", lambda cfg: self.source)
         src.start()
         self.addCleanup(src.stop)
-        self.service = Service([os.path.join(ROOT, "recipes")])
+        self.library = os.path.join(self.tmp.name, "recipes")
+        self.service = Service([os.path.join(ROOT, "recipes"), self.library])
         self.serve_at = (datetime.now() + timedelta(hours=30)).strftime("%Y-%m-%d %H:%M")
 
 
@@ -93,6 +94,81 @@ class ServiceTests(Base):
         self.assertIn("post oak, two chunks", json.dumps(detail["events"]))
         with self.assertRaises(ServiceError):
             self.service.cook("../etc")
+
+    RUB = {"name": "Coffee Chilli", "description": "Dark and a little bitter.", "ingredients": [
+        {"name": "ground coffee", "parts": 2}, {"name": "ancho chilli", "parts": 2},
+        {"name": "kosher salt", "parts": 2, "kind": "salt"}, {"name": "brown sugar", "parts": 3, "kind": "sugar"},
+        {"name": "", "parts": ""}]}
+    RECIPE = {"name": "Beef Short Ribs", "cut": "beef-short-ribs", "rub": "coffee-chilli", "pit_target_c": 135,
+              "meat_target_c": 96, "hours_fixed": 8, "wrap_at_c": 77, "wrap_material": "butcher paper",
+              "rest_min_minutes": 30, "rest_ideal_minutes": 60, "description": "Plate ribs."}
+
+    def test_own_rub_and_recipe_are_yaml_with_history(self):
+        import subprocess
+        import yaml
+        with self.assertRaises(ServiceError) as cm:
+            self.service.save_recipe(self.RECIPE)                       # the rub does not exist yet
+        self.assertIn("save the rub first", str(cm.exception))
+        out = self.service.save_rub(self.RUB)
+        self.assertEqual((out["id"], out["message"]), ("coffee-chilli", "added"))
+        self.assertEqual(self.service.save_rub(self.RUB)["message"], "no change")
+        with open(os.path.join(self.library, "rubs", "coffee-chilli.yaml")) as f:
+            doc = yaml.safe_load(f)
+        self.assertEqual(doc["kind"], "Rub")
+        self.assertEqual(len(doc["ingredients"]), 4)                    # the empty form row is dropped
+        out = self.service.save_recipe(self.RECIPE)
+        self.assertEqual((out["id"], out["version"], out["message"]), ("beef-short-ribs", "1.0.0", "added"))
+        self.assertEqual(out["warnings"], [])
+        hotter = dict(self.RECIPE, pit_target_c=150, change="hotter pit for a shorter cook")
+        out = self.service.save_recipe(hotter)
+        self.assertEqual(out["version"], "1.0.1")                       # changed -> new version number
+        self.assertIn("sugar scorches", out["warnings"][0])
+        self.assertEqual(self.service.save_recipe(dict(hotter, version="1.0.1"))["message"], "no change")
+        mine = {r["id"]: r for r in self.service.list_recipes()}
+        self.assertTrue(mine["beef-short-ribs"]["own"])
+        self.assertFalse(mine["texas-brisket"]["own"])
+        self.assertEqual(mine["beef-short-ribs"]["rub"]["id"], "coffee-chilli")
+        rubs = {r["id"]: r for r in self.service.list_rubs()}
+        self.assertEqual(rubs["coffee-chilli"]["used_by"], ["beef-short-ribs"])
+        self.assertAlmostEqual(rubs["coffee-chilli"]["sugar"], 3 / 9)
+        self.assertFalse(rubs["dalmatian"]["own"])
+        log = subprocess.run(["git", "-C", self.library, "log", "--format=%s"], capture_output=True, text=True).stdout
+        self.assertIn("recipe beef-short-ribs 1.0.1: hotter pit for a shorter cook", log)
+        self.assertEqual(len(self.service.item_history("recipe", "beef-short-ribs")), 2)
+        self.assertEqual(self.service.plan("beef-short-ribs", None, self.serve_at)["steps"][-1]["step"], "serve")
+        with self.assertRaises(ServiceError) as cm:
+            self.service.delete_item("rub", "coffee-chilli")
+        self.assertIn("uses this rub", str(cm.exception))
+        self.service.delete_item("recipe", "beef-short-ribs")
+        self.service.delete_item("rub", "coffee-chilli")
+        with self.assertRaises(ServiceError):
+            self.service.delete_item("recipe", "texas-brisket")          # shipped recipes cannot be deleted
+
+    def test_bad_recipes_are_refused_with_the_reason(self):
+        self.service.save_rub(self.RUB)
+        for change, wrong in (({"cut": "tofu-block"}, "must start with"),
+                              ({"cut": "chicken-thighs", "meat_target_c": 65, "wrap_at_c": None}, "food-safety floor of 74"),
+                              ({"hours_per_kg": 2}, "exactly one of"),
+                              ({"pit_target_c": "hot"}, "must be a number"),
+                              ({"name": " "}, "needs a name")):
+            with self.assertRaises(ServiceError) as cm:
+                self.service.save_recipe(dict(self.RECIPE, **change))
+            self.assertIn(wrong, str(cm.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.library, "beef-short-ribs.yaml")))
+        with self.assertRaises(ServiceError):
+            self.service.save_rub({"name": "empty", "ingredients": []})
+
+    def test_own_copy_replaces_a_shipped_recipe_and_keeps_its_rub(self):
+        out = self.service.save_recipe({"name": "texas-brisket", "cut": "beef-brisket-packer", "rub": "dalmatian",
+                                        "pit_target_c": 110, "meat_target_c": 95, "hours_per_kg": 3.3,
+                                        "wrap_at_c": 74, "version": "1.0.0", "change": "lower and slower"})
+        self.assertTrue(out["saved"])
+        mine = {r["id"]: r for r in self.service.list_recipes()}["texas-brisket"]
+        self.assertTrue(mine["own"])
+        self.assertEqual(mine["pit_target_c"], 110)
+        self.assertEqual(mine["rub"]["name"], "dalmatian")              # found in the shipped rubs
+        self.service.delete_item("recipe", "texas-brisket")
+        self.assertEqual({r["id"]: r for r in self.service.list_recipes()}["texas-brisket"]["pit_target_c"], 121)
 
     def test_photo_checks_are_stored_as_data(self):
         with self.assertRaises(ServiceError):
@@ -195,7 +271,7 @@ class McpTests(Base):
                          mcp.PROTOCOL_VERSIONS[0])
         self.assertIsNone(mcp.handle(self.service, {"jsonrpc": "2.0", "method": "notifications/initialized"}))
         names = [t["name"] for t in self.call("tools/list")["result"]["tools"]]
-        self.assertEqual(len(names), 9)
+        self.assertEqual(len(names), 12)
         for t in self.call("tools/list")["result"]["tools"]:
             self.assertEqual(t["inputSchema"]["type"], "object")
         self.assertEqual(self.call("nope")["error"]["code"], -32601)
@@ -206,6 +282,18 @@ class McpTests(Base):
         err, text = self.tool("list_recipes")
         self.assertFalse(err)
         self.assertNotIn("apiVersion", text)                     # no raw YAML source in the tool result
+        err, text = self.tool("save_rub", {"name": "sp", "ingredients": [{"name": "salt", "parts": 1, "kind": "salt"},
+                                                                         {"name": "pepper", "parts": 1}]})
+        self.assertFalse(err, text)
+        err, text = self.tool("save_recipe", {"name": "lamb-shoulder", "cut": "lamb-shoulder", "rub": "sp",
+                                              "pit_target_c": 130, "meat_target_c": 93, "hours_per_kg": 3})
+        self.assertFalse(err, text)
+        self.assertIn("lamb-shoulder", self.tool("list_recipes")[1])
+        self.assertIn('"sp"', self.tool("list_rubs")[1])
+        err, text = self.tool("save_recipe", {"name": "raw-chicken", "cut": "chicken-whole", "pit_target_c": 120,
+                                              "meat_target_c": 60, "hours_fixed": 3})
+        self.assertTrue(err)
+        self.assertIn("food-safety floor", text)
         err, text = self.tool("plan_cook", {"recipe": "pork-ribs", "serve_at": self.serve_at})
         self.assertIn("serve", text)
         err, text = self.tool("log_step", {"step": "meat-on"})
@@ -275,6 +363,12 @@ class HttpTests(Base):
     def test_api_and_mcp_over_http(self):
         self.assertIsNone(self.req("/api/status")[1]["cook"])
         self.assertEqual(len(self.req("/api/recipes")[1]), 3)
+        self.assertEqual(len(self.req("/api/rubs")[1]), 2)
+        code, body, _ = self.req("/api/rubs", {"name": "plain", "ingredients": [{"name": "salt", "parts": 1}]})
+        self.assertEqual((code, body["id"]), (200, "plain"))
+        self.assertTrue(self.req("/api/history/rub/plain")[1][0].endswith("rub plain: add"))
+        self.assertEqual(self.req("/api/delete", {"kind": "rub", "id": "plain"})[1]["deleted"], "plain")
+        self.assertEqual(self.req("/api/recipes", {"name": "x"})[0], 400)
         code, body, _ = self.req("/api/plan", {"recipe": "texas-brisket", "serve_at": self.serve_at})
         self.assertEqual(code, 400)
         self.assertIn("weight", body["error"])

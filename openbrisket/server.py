@@ -85,6 +85,11 @@ def make_handler(service: Service):
                     return self._json(service.status())
                 if path == "/api/recipes":
                     return self._json(service.list_recipes())
+                if path == "/api/rubs":
+                    return self._json(service.list_rubs())
+                if path.startswith("/api/history/"):
+                    kind, _, item = path[len("/api/history/"):].partition("/")
+                    return self._json(service.item_history(kind, item))
                 if path == "/api/checks":
                     return self._json(service.check_vocabulary())
                 if path == "/api/cooks":
@@ -112,6 +117,12 @@ def make_handler(service: Service):
                     if reply is None:
                         return self._send(202, b"", "application/json")
                     return self._json(reply)
+                if path == "/api/recipes":
+                    return self._json(service.save_recipe(body))
+                if path == "/api/rubs":
+                    return self._json(service.save_rub(body))
+                if path == "/api/delete":
+                    return self._json(service.delete_item(body.get("kind", ""), body.get("id", "")))
                 if path == "/api/plan":
                     return self._json(service.plan(body.get("recipe"), body.get("weight_kg"), body.get("serve_at")))
                 if path == "/api/cooks":

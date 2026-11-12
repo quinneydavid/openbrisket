@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import yaml
 
-from . import checks as checkmod, notify, plan as planmod, recipes, settings, smoketest, sources
+from . import checks as checkmod, library, notify, plan as planmod, recipes, settings, smoketest, sources
 from .cook import Engine
 from .store import MAX_PROBES, Store
 
@@ -137,10 +137,17 @@ class Service:
         ok = n.send("OpenBrisket: test note. Notes from your cooks will arrive here.")
         return {"ok": ok, "error": None if ok else "Telegram refused the message; check the bot token and chat id"}
 
-    # --- recipes ----------------------------------------------------------------------------------
+    # --- recipes and rubs -------------------------------------------------------------------------
+    def library_root(self) -> str:
+        """The folder your own recipes are written to: the last of the recipe folders."""
+        return self.recipe_dirs[-1]
+
+    def _is_own(self, path: str) -> bool:
+        return os.path.abspath(path).startswith(os.path.abspath(self.library_root()) + os.sep)
+
     def _recipe_files(self) -> dict[str, str]:
         found: dict[str, str] = {}
-        for d in self.recipe_dirs:
+        for d in self.recipe_dirs:                 # later folders win: your copy replaces a shipped recipe
             if not os.path.isdir(d):
                 continue
             for name in sorted(os.listdir(d)):
@@ -148,31 +155,74 @@ class Service:
                     found[os.path.splitext(name)[0]] = os.path.join(d, name)
         return found
 
+    def _rub_files(self) -> dict[str, str]:
+        found: dict[str, str] = {}
+        for d in self.recipe_dirs:
+            rubs = os.path.join(d, "rubs")
+            if not os.path.isdir(rubs):
+                continue
+            for name in sorted(os.listdir(rubs)):
+                if name.endswith((".yaml", ".yml")):
+                    found[os.path.splitext(name)[0]] = os.path.join(rubs, name)
+        return found
+
+    def _rub_view(self, path: str) -> dict | None:
+        try:
+            with open(path, encoding="utf-8") as f:
+                source = f.read()
+            doc = yaml.safe_load(source)
+            if recipes.validate_rub(doc):
+                return None
+        except (OSError, yaml.YAMLError):
+            return None
+        return {"name": doc.get("name"), "description": doc.get("description", ""),
+                "ingredients": doc.get("ingredients"), **recipes.rub_fractions(doc), "source": source, "doc": doc}
+
+    def list_rubs(self) -> list[dict]:
+        used: dict[str, list[str]] = {}
+        for r in self.list_recipes():
+            if r.get("valid") and r.get("rub"):
+                used.setdefault(r["rub"]["id"], []).append(r["id"])
+        out = []
+        for rid, path in sorted(self._rub_files().items()):
+            v = self._rub_view(path)
+            if v is None:
+                out.append({"id": rid, "valid": False, "error": "not a valid rub file", "own": self._is_own(path)})
+                continue
+            v.pop("doc")
+            out.append({"id": rid, "valid": True, "own": self._is_own(path), "used_by": used.get(rid, []), **v})
+        return out
+
     def list_recipes(self) -> list[dict]:
         out = []
-        for rid, path in self._recipe_files().items():
+        rub_files = self._rub_files()
+        for rid, path in sorted(self._recipe_files().items()):
+            own = self._is_own(path)
             try:
-                r = recipes.load_recipe(path)
+                r = recipes.load_recipe(path, self.recipe_dirs)
             except (recipes.RecipeError, yaml.YAMLError, OSError) as e:
-                out.append({"id": rid, "valid": False, "error": str(e)})
+                out.append({"id": rid, "valid": False, "error": str(e), "own": own})
                 continue
             with open(path, encoding="utf-8") as f:
                 source = f.read()
-            rub = None
+            rub, rub_doc = None, None
             if r.rub:
-                try:
-                    with open(os.path.join(os.path.dirname(path), r.rub), encoding="utf-8") as f:
-                        doc = yaml.safe_load(f)
-                    rub = {"name": doc.get("name"), "description": doc.get("description", ""),
-                           "ingredients": doc.get("ingredients"), **recipes.rub_fractions(doc)}
-                except (OSError, yaml.YAMLError):
-                    rub = None
+                rub_id = os.path.splitext(os.path.basename(r.rub))[0]
+                found = recipes.find_rub(r.rub, os.path.dirname(path), self.recipe_dirs)
+                view = self._rub_view(found or rub_files.get(rub_id, "")) if (found or rub_id in rub_files) else None
+                if view:
+                    rub_doc = view.pop("doc")
+                    view.pop("source")
+                    rub = {"id": rub_id, **view}
             out.append({
-                "id": rid, "valid": True, "name": r.name, "version": r.version, "cut": r.cut,
-                "description": r.description, "pit_target_c": r.pit_target_c, "meat_target_c": r.meat_target_c,
-                "hours_per_kg": r.hours_per_kg, "hours_fixed": r.hours_fixed, "wrap_at_c": r.wrap_at_c,
-                "wrap_material": r.wrap_material, "rest_ideal_minutes": r.rest_ideal_minutes, "rub": rub,
-                "source": source,
+                "id": rid, "valid": True, "own": own, "name": r.name, "version": r.version, "cut": r.cut,
+                "description": r.description, "pit_target_c": r.pit_target_c, "pit_tolerance_c": r.pit_tolerance_c,
+                "meat_target_c": r.meat_target_c, "hours_per_kg": r.hours_per_kg, "hours_fixed": r.hours_fixed,
+                "fridge_out_min": r.fridge_out_min, "dry_brine_hours": r.dry_brine_hours,
+                "stall_from_c": r.stall_from_c, "stall_to_c": r.stall_to_c, "wrap_at_c": r.wrap_at_c,
+                "wrap_material": r.wrap_material, "rest_min_minutes": r.rest_min_minutes,
+                "rest_ideal_minutes": r.rest_ideal_minutes, "rub": rub,
+                "warnings": recipes.warnings(r.raw, rub_doc), "source": source,
             })
         return out
 
@@ -181,8 +231,45 @@ class Service:
         if not path:
             raise ServiceError(f"no recipe called '{recipe_id}'; there are: {', '.join(self._recipe_files()) or 'none'}")
         try:
-            return recipes.load_recipe(path)
+            return recipes.load_recipe(path, self.recipe_dirs)
         except recipes.RecipeError as e:
+            raise ServiceError(str(e)) from None
+
+    def save_rub(self, form: dict) -> dict:
+        with self.lock:
+            try:
+                return library.save_rub(self.library_root(), form or {})
+            except library.LibraryError as e:
+                raise ServiceError(str(e)) from None
+
+    def save_recipe(self, form: dict) -> dict:
+        with self.lock:
+            form = dict(form or {})
+            if form.get("rub") and library.slug(form["rub"]) not in self._rub_files():
+                raise ServiceError(f"no rub called '{form['rub']}'; save the rub first, or choose one of: "
+                                   f"{', '.join(self._rub_files()) or 'none'}")
+            try:
+                out = library.save_recipe(self.library_root(), form, self.recipe_dirs)
+            except library.LibraryError as e:
+                raise ServiceError(str(e)) from None
+            saved = next((r for r in self.list_recipes() if r["id"] == out["id"]), None)
+            out["warnings"] = (saved or {}).get("warnings", [])
+            return out
+
+    def delete_item(self, kind: str, item_id: str) -> dict:
+        if kind not in ("recipe", "rub"):
+            raise ServiceError("kind is recipe or rub")
+        with self.lock:
+            try:
+                library.delete(self.library_root(), kind, item_id)
+            except library.LibraryError as e:
+                raise ServiceError(str(e)) from None
+            return {"deleted": library.slug(item_id), "kind": kind}
+
+    def item_history(self, kind: str, item_id: str) -> list[str]:
+        try:
+            return library.history(self.library_root(), kind, item_id)
+        except library.LibraryError as e:
             raise ServiceError(str(e)) from None
 
     def plan(self, recipe_id: str, weight_kg: float | None, serve_at: str) -> dict:
