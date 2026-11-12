@@ -136,7 +136,11 @@ class ServiceTests(Base):
         self.assertFalse(rubs["dalmatian"]["own"])
         log = subprocess.run(["git", "-C", self.library, "log", "--format=%s"], capture_output=True, text=True).stdout
         self.assertIn("recipe beef-short-ribs 1.0.1: hotter pit for a shorter cook", log)
-        self.assertEqual(len(self.service.item_history("recipe", "beef-short-ribs")), 2)
+        hist = self.service.item_history("recipe", "beef-short-ribs")
+        self.assertEqual([(h["version"], h["created"]) for h in hist], [("1.0.1", False), ("1.0.0", True)])
+        self.assertEqual(hist[0]["message"], "recipe beef-short-ribs 1.0.1: hotter pit for a shorter cook")
+        self.assertEqual(hist[0]["changes"], [{"field": "Pit temperature", "before": "135", "after": "150"}])
+        self.assertEqual(hist[1]["changes"], [])
         self.assertEqual(self.service.plan("beef-short-ribs", None, self.serve_at)["steps"][-1]["step"], "serve")
         with self.assertRaises(ServiceError) as cm:
             self.service.delete_item("rub", "coffee-chilli")
@@ -145,6 +149,51 @@ class ServiceTests(Base):
         self.service.delete_item("rub", "coffee-chilli")
         with self.assertRaises(ServiceError):
             self.service.delete_item("recipe", "texas-brisket")          # shipped recipes cannot be deleted
+
+    def test_rub_ratios_have_versions_and_a_readable_history(self):
+        first = self.service.save_rub(self.RUB)
+        self.assertEqual(first["version"], "1.0.0")
+        less_sugar = dict(self.RUB, ingredients=[
+            {"name": "ground coffee", "parts": 2}, {"name": "ancho chilli", "parts": 2},
+            {"name": "kosher salt", "parts": 2, "kind": "salt"}, {"name": "brown sugar", "parts": 1.5, "kind": "sugar"},
+            {"name": "smoked paprika", "parts": 1}], change="bark burnt, halve the sugar")
+        out = self.service.save_rub(less_sugar)
+        self.assertEqual((out["version"], out["message"]), ("1.0.1", "updated to 1.0.1"))
+        hist = self.service.item_history("rub", "coffee-chilli")
+        self.assertEqual(hist[0]["message"], "rub coffee-chilli 1.0.1: bark burnt, halve the sugar")
+        self.assertEqual(hist[0]["changes"], [
+            {"field": "brown sugar", "before": "3 parts (sugar)", "after": "1.5 parts (sugar)"},
+            {"field": "smoked paprika", "before": None, "after": "1 part"}])
+        self.assertEqual({r["id"]: r["version"] for r in self.service.list_rubs()}["coffee-chilli"], "1.0.1")
+        self.assertEqual({r["id"]: r["version"] for r in self.service.list_rubs()}["dalmatian"], "1.0.0")
+
+    def test_results_are_grouped_by_recipe_version(self):
+        self.service.save_rub(self.RUB)
+        self.service.save_recipe(self.RECIPE)
+        def cook(score):
+            started = self.service.start("beef-short-ribs", None, self.serve_at)
+            self.service.log_step("meat-on")
+            self.service.close(score=score, notes="n")
+            return started["cook"]
+        a = cook(6)
+        self.assertEqual(self.service.store().meta(a)["rub"]["version"], "1.0.0")
+        self.assertEqual(len(self.service.store().meta(a)["rub"]["ingredients"]), 4)
+        out = self.service.save_recipe(dict(self.RECIPE, meat_target_c=94, change="pull a little earlier"))
+        self.assertEqual(out["version"], "1.0.1")
+        b, c = cook(8), cook(9)
+        # a later change sent without a version (as an agent does) carries on from 1.0.1, it never restarts at 1.0.0
+        self.assertEqual(self.service.save_recipe(dict(self.RECIPE, meat_target_c=93))["version"], "1.0.2")
+        self.assertEqual(self.service.save_recipe(dict(self.RECIPE, meat_target_c=93))["message"], "no change")
+        self.service.save_recipe(dict(self.RECIPE, meat_target_c=94, version="1.0.2"))
+        self.service.start("beef-short-ribs", None, self.serve_at)
+        self.service.close(abandon=True)                         # an abandoned cook is not a result
+        res = {r["id"]: r for r in self.service.list_recipes()}["beef-short-ribs"]["results"]
+        self.assertEqual([(v["version"], v["count"], v["avg_score"], v["best_score"]) for v in res],
+                         [("1.0.0", 1, 6.0, 6.0), ("1.0.1", 2, 8.5, 9.0)])
+        self.assertEqual({r["id"]: r for r in self.service.list_recipes()}["beef-short-ribs"]["version"], "1.0.3")
+        self.assertEqual({x["id"] for x in res[1]["cooks"]}, {b, c})
+        self.assertEqual(res[0]["cooks"][0]["rub_version"], "1.0.0")
+        self.assertEqual({r["id"]: r for r in self.service.list_recipes()}["texas-brisket"]["results"], [])
 
     def test_bad_recipes_are_refused_with_the_reason(self):
         self.service.save_rub(self.RUB)
@@ -286,7 +335,7 @@ class McpTests(Base):
                          mcp.PROTOCOL_VERSIONS[0])
         self.assertIsNone(mcp.handle(self.service, {"jsonrpc": "2.0", "method": "notifications/initialized"}))
         names = [t["name"] for t in self.call("tools/list")["result"]["tools"]]
-        self.assertEqual(len(names), 13)
+        self.assertEqual(len(names), 14)
         for t in self.call("tools/list")["result"]["tools"]:
             self.assertEqual(t["inputSchema"]["type"], "object")
         self.assertEqual(self.call("nope")["error"]["code"], -32601)
@@ -381,7 +430,7 @@ class HttpTests(Base):
         self.assertEqual(len(self.req("/api/rubs")[1]), 2)
         code, body, _ = self.req("/api/rubs", {"name": "plain", "ingredients": [{"name": "salt", "parts": 1}]})
         self.assertEqual((code, body["id"]), (200, "plain"))
-        self.assertTrue(self.req("/api/history/rub/plain")[1][0].endswith("rub plain: add"))
+        self.assertEqual(self.req("/api/history/rub/plain")[1][0]["message"], "rub plain 1.0.0: add")
         self.assertEqual(self.req("/api/delete", {"kind": "rub", "id": "plain"})[1]["deleted"], "plain")
         self.assertEqual(self.req("/api/recipes", {"name": "x"})[0], 400)
         code, body, _ = self.req("/api/plan", {"recipe": "texas-brisket", "serve_at": self.serve_at})

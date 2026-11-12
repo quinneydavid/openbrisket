@@ -1,6 +1,11 @@
 # OpenBrisket
 
-PitOps for your smoker: recipes as code, a cook log in git, and a note whenever the meat needs you.
+BBQ as code. Recipes and rubs are files in git, every cook is a log of commits, and you get a note whenever the
+meat needs you. We call the method PitOps.
+
+Smoking meat means changing things: how long it cooks, when it comes off, what goes in the rub. OpenBrisket keeps
+every one of those changes with its reason, and puts the results of each version next to it, so the next change
+is a decision and not a guess.
 
 OpenBrisket reads your pit and meat temperatures and your fan, follows the cook against a recipe, and
 tells you when something needs doing: the stall has started, it is time to wrap, the fire is dying, you
@@ -93,7 +98,8 @@ using the terminal alone.
 - **Cook**: the open cook as a row of stages, live temperatures, the curve with the estimate drawn
   ahead, status checks, buttons for the steps you do by hand, and the commit log. Put as many probes
   in the meat as you like: the coldest one decides when it is done.
-- **Recipes**: every recipe and rub with its numbers and source file, and forms to write your own. What you
+- **Recipes**: every recipe and rub with its numbers and source file, the cooks and scores each recipe version
+  produced, a History that shows exactly what changed between versions and why, and forms to write your own. What you
   save is a YAML file in your own library (`recipes/` in the data folder, a git repository), with a commit for
   every change. The built-in ones are read-only; "Customise" makes your copy.
 - **History**: a year of cooks at a glance, and each past cook with its curve, events and score.

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0
+
+- Change history you can read: History on a recipe or rub lists every version with the reason and exactly which
+  fields changed, before and after ("Pit temperature: 135 -> 125", "brown sugar: 3 parts -> 1.5 parts").
+- Results per recipe version: each recipe shows its finished cooks grouped by version, with the average and best
+  score and links to the cooks, so you can see whether a change helped.
+- Rubs have version numbers and a "what changed and why" line, like recipes. A cook records the exact rub it used.
+- New MCP tool `recipe_history`.
+- Fix: saving a recipe change without a version number (as an agent does) restarted the numbering at 1.0.0.
+- The tagline is now "BBQ as code".
+
 ## 0.6.1
 
 - Probes can come and go. A probe that falls 6 C or more inside three minutes is taken as pulled out and stops

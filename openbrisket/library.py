@@ -101,7 +101,8 @@ def rub_doc(form: dict) -> dict:
         if item.get("kind") in ("salt", "sugar"):
             entry["kind"] = item["kind"]
         ingredients.append(entry)
-    doc = {"apiVersion": recipes.API_VERSION, "kind": "Rub", "name": name}
+    doc = {"apiVersion": recipes.API_VERSION, "kind": "Rub", "name": name,
+           "version": str(form.get("version") or "1.0.0").strip()}
     if str(form.get("description") or "").strip():
         doc["description"] = str(form["description"]).strip()
     doc["ingredients"] = ingredients
@@ -114,7 +115,7 @@ def recipe_doc(form: dict) -> dict:
     if not name:
         raise LibraryError("the recipe needs a name")
     doc: dict = {"apiVersion": recipes.API_VERSION, "kind": "Recipe", "name": name,
-                 "version": str(form.get("version") or "1.0.0").strip(), "cut": slug(form.get("cut") or "")}
+                 "version": str(form.get("version") or "").strip(), "cut": slug(form.get("cut") or "")}
     if str(form.get("description") or "").strip():
         doc["description"] = str(form["description"]).strip()
     if form.get("rub"):
@@ -155,13 +156,21 @@ def save_rub(root: str, form: dict) -> dict:
         raise LibraryError("; ".join(problems))
     ensure(root)
     path = os.path.join(root, "rubs", doc["name"] + ".yaml")
-    new = not os.path.exists(path)
-    if _existing(path) == doc:
-        return {"id": doc["name"], "saved": False, "message": "no change"}
+    old = _existing(path)
+    if old is not None:
+        if "version" not in form or not form.get("version"):
+            doc["version"] = str(old.get("version", "1.0.0"))
+        body = lambda d: {k: v for k, v in d.items() if k != "version"}  # noqa: E731
+        if body(old) == body(doc) and str(old.get("version", "1.0.0")) == doc["version"]:
+            return {"id": doc["name"], "version": doc["version"], "saved": False, "message": "no change"}
+        if body(old) != body(doc) and str(old.get("version", "1.0.0")) == doc["version"]:
+            doc["version"] = bump(doc["version"])     # a changed rub never keeps its old version number
     with open(path, "w", encoding="utf-8") as f:
         f.write(_dump(doc))
-    _commit(root, f"rub {doc['name']}: {'add' if new else 'update'}")
-    return {"id": doc["name"], "saved": True, "message": "added" if new else "updated"}
+    summary = str(form.get("change") or "").strip()
+    _commit(root, f"rub {doc['name']} {doc['version']}: " + (summary or ("add" if old is None else "update")))
+    return {"id": doc["name"], "version": doc["version"], "saved": True,
+            "message": "added" if old is None else f"updated to {doc['version']}"}
 
 
 def save_recipe(root: str, form: dict, rub_dirs: list[str]) -> dict:
@@ -169,6 +178,8 @@ def save_recipe(root: str, form: dict, rub_dirs: list[str]) -> dict:
     ensure(root)
     path = os.path.join(root, doc["name"] + ".yaml")
     old = _existing(path)
+    if not doc["version"]:               # no version given: carry on from the saved one, never restart at 1.0.0
+        doc["version"] = str(old.get("version", "1.0.0")) if old is not None else "1.0.0"
     if old is not None:
         same_body = {k: v for k, v in old.items() if k != "version"} == {k: v for k, v in doc.items() if k != "version"}
         if same_body and str(old.get("version")) == doc["version"]:
@@ -201,8 +212,65 @@ def delete(root: str, kind: str, item_id: str) -> None:
     _commit(root, f"{kind} {name}: delete")
 
 
-def history(root: str, kind: str, item_id: str, limit: int = 20) -> list[str]:
+LABELS = {
+    "version": "Version", "cut": "Cut", "description": "Description", "rub": "Rub",
+    "pit.target_c": "Pit temperature", "pit.tolerance_c": "Pit tolerance", "meat.target_c": "Meat target",
+    "timing.hours_per_kg": "Hours per kg", "timing.hours_fixed": "Hours, whatever the weight",
+    "timing.fridge_out_min": "Out of the fridge, minutes before", "timing.dry_brine_hours": "Dry brine, hours before",
+    "stall.from_c": "Stall from", "stall.to_c": "Stall to", "wrap.at_c": "Wrap at", "wrap.material": "Wrap in",
+    "rest.min_minutes": "Rest, minimum minutes", "rest.ideal_minutes": "Rest, ideal minutes",
+    "rest.hold_min_c": "Hold floor",
+}
+
+
+def _flat(doc: dict | None) -> dict[str, str]:
+    """A recipe or rub as flat field -> text, so two versions can be compared line by line."""
+    out: dict[str, str] = {}
+    if not isinstance(doc, dict):
+        return out
+    for key, value in doc.items():
+        if key in ("apiVersion", "kind", "name"):
+            continue
+        if key == "ingredients" and isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict) and item.get("name"):
+                    parts = item.get("parts")
+                    text = (f"{parts:g} part" + ("" if parts == 1 else "s")) if isinstance(parts, (int, float)) else str(parts)
+                    out[f"ingredient:{item['name']}"] = text + (f" ({item['kind']})" if item.get("kind") else "")
+        elif isinstance(value, dict):
+            for k2, v2 in value.items():
+                out[f"{key}.{k2}"] = f"{v2:g}" if isinstance(v2, float) else str(v2)
+        else:
+            out[key] = str(value)
+    return out
+
+
+def _changes(before: dict | None, after: dict | None) -> list[dict]:
+    a, b = _flat(before), _flat(after)
+    out = []
+    for key in list(dict.fromkeys([*a, *b])):
+        if a.get(key) == b.get(key) or key == "version":
+            continue
+        label = key[len("ingredient:"):] if key.startswith("ingredient:") else LABELS.get(key, key)
+        out.append({"field": label, "before": a.get(key), "after": b.get(key)})
+    return out
+
+
+def history(root: str, kind: str, item_id: str, limit: int = 50) -> list[dict]:
+    """Every saved version of a recipe or rub, newest first, each with what changed from the one before."""
     rel = os.path.join("rubs" if kind == "rub" else "", slug(item_id) + ".yaml")
     if not os.path.isdir(os.path.join(root, ".git")):
         return []
-    return _git(root, "log", f"-{limit}", "--format=%ad %s", "--date=format:%d %b %Y %H:%M", "--", rel).splitlines()
+    lines = _git(root, "log", f"-{limit}", "--format=%H|%aI|%s", "--", rel).splitlines()
+    entries, previous = [], None
+    for line in reversed(lines):                      # oldest first, to compare each with the one before
+        sha, at, message = line.split("|", 2)
+        try:
+            doc = yaml.safe_load(_git(root, "show", f"{sha}:{rel}"))
+        except (LibraryError, yaml.YAMLError):
+            doc = None                                # the commit that deleted the file
+        entries.append({"at": at, "message": message, "version": str(doc.get("version", "")) if doc else None,
+                        "deleted": doc is None, "created": previous is None and doc is not None,
+                        "changes": _changes(previous, doc) if previous is not None and doc is not None else []})
+        previous = doc
+    return list(reversed(entries))

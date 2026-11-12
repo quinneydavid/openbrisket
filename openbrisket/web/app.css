@@ -192,6 +192,14 @@ h1.section { margin-top: 32px; }
 .ing { display: grid; grid-template-columns: minmax(0, 1fr) 96px 104px auto; gap: 8px; }
 @media (max-width: 560px) { .ing { grid-template-columns: 1fr 1fr; } }
 table.ingredients { max-width: 520px; }
+.results { margin-top: 12px; }
+.results td.links { text-align: left; white-space: normal; }
+.results th:last-child { text-align: left; }
+.rows.history { margin-top: 12px; border: 1px solid var(--border); border-radius: 6px; }
+ul.changes { margin: 4px 0 0; padding-left: 18px; color: var(--text-2); }
+.rows ul.changes li { display: list-item; padding: 1px 0; border: 0; }
+ul.changes b { color: var(--text); font-weight: 600; }
+.was { text-decoration: line-through; color: var(--text-3); }
 button.primary { background: var(--primary); border-color: transparent; color: var(--primary-ink); }
 button.primary:hover { background: var(--primary-hover); }
 button.danger { color: var(--critical); }

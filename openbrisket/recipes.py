@@ -198,6 +198,8 @@ def validate_rub(doc: dict) -> list[str]:
         p.append("kind must be Rub")
     if not isinstance(doc.get("name"), str) or not doc.get("name"):
         p.append("name is missing")
+    if "version" in doc and not isinstance(doc["version"], (str, int, float)):
+        p.append("version must be text such as 1.0.0")
     ing = doc.get("ingredients")
     if not isinstance(ing, list) or not ing:
         p.append("ingredients must be a non-empty list")

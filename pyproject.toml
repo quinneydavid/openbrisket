@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openbrisket"
-version = "0.6.1"
-description = "PitOps for your smoker: recipes as code, a cook log in git, and notes when the meat needs you."
+version = "0.7.0"
+description = "BBQ as code: recipes and rubs in git, a cook log with history, and notes when the meat needs you."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "David Quinney"}]

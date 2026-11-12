@@ -195,7 +195,7 @@ def cmd_serve(args) -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="openbrisket", description="PitOps for your smoker.")
+    ap = argparse.ArgumentParser(prog="openbrisket", description="BBQ as code.")
     ap.add_argument("--version", action="version", version=f"openbrisket {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

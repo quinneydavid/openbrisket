@@ -446,12 +446,14 @@ function rubForm(rub) {
       field("r-desc", "Description", rub.description, { placeholder: "what it is for, anything to watch" })),
     h("label", { class: "block-label" }, "Ingredients, in parts"), rows,
     h("p", { class: "hint" }, "Parts are a ratio: 2 pepper to 1 salt. Mark salt and sugar so OpenBrisket can warn about scorching and double salting."),
+    rub.name ? h("div", { class: "fields block-label" }, field("r-change", "What changed and why", "", { wide: true, placeholder: "bark burnt, halve the sugar",
+      hint: `Becomes the commit message. Now at version ${rub.version || "1.0.0"}; a changed rub gets the next number.` })) : null,
     h("div", { class: "actions" },
       h("button", { type: "button", onclick: () => addRow() }, "Add ingredient"),
       h("button", { type: "button", class: "primary", onclick: (ev) => act(ev.target, async () => {
         const ingredients = [...rows.querySelectorAll(".ing")].map((r) => ({ name: r.querySelector(".ing-name").value.trim(),
           parts: r.querySelector(".ing-parts").value === "" ? "" : Number(r.querySelector(".ing-parts").value), kind: r.querySelector(".ing-kind").value }));
-        await api("/api/rubs", { name: fv("r-name"), description: fv("r-desc"), ingredients });
+        await api("/api/rubs", { name: fv("r-name"), description: fv("r-desc"), ingredients, change: document.getElementById("r-change") ? fv("r-change") : "" });
         location.hash = "#recipes"; await route(); }) }, "Save rub"),
       h("button", { type: "button", onclick: () => { location.hash = "#recipes"; } }, "Cancel"))));
 }
@@ -496,8 +498,15 @@ function recipeForm(r, rubs) {
 
 function historyButton(kind, id, holder) {
   return h("button", { type: "button", onclick: (ev) => act(ev.target, async () => {
-    const lines = await api(`/api/history/${kind}/${encodeURIComponent(id)}`);
-    holder.replaceChildren(h("pre", {}, lines.length ? lines.join("\n") : "No saved versions yet (built-in)."));
+    const entries = await api(`/api/history/${kind}/${encodeURIComponent(id)}`);
+    holder.replaceChildren(entries.length ? h("ul", { class: "rows history" }, entries.map((e) => h("li", {},
+      h("span", { class: "time" }, new Date(e.at).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })),
+      h("div", { class: "msgtext" }, h("div", {}, e.message.replace(/^(recipe|rub) \S+ /, "").replace(/^(\S+): /, "v$1: ")),
+        e.created ? h("div", { class: "muted" }, "first version") : e.deleted ? h("div", { class: "muted" }, "deleted") :
+        e.changes.length ? h("ul", { class: "changes" }, e.changes.map((c) => h("li", {}, h("b", {}, c.field), ": ",
+          c.before === null ? h("span", { class: "muted" }, "added") : h("span", { class: "was" }, c.before), " → ",
+          c.after === null ? h("span", { class: "muted" }, "removed") : h("span", {}, c.after)))) : h("div", { class: "muted" }, "no field changed"))))) :
+      h("p", { class: "hint" }, "No saved versions: this one is built in. Customise it to start its history."));
   }) }, "History");
 }
 function removeButton(kind, id) {
@@ -530,14 +539,19 @@ async function renderRecipes(arg) {
             h("dt", {}, "Time"), h("dd", {}, r.hours_fixed ? `about ${r.hours_fixed} h` : `about ${r.hours_per_kg} h per kg`),
             h("dt", {}, "Wrap"), h("dd", {}, r.wrap_at_c ? `at ${r.wrap_at_c} °C` + (r.wrap_material ? `, ${r.wrap_material}` : "") : "not wrapped"),
             h("dt", {}, "Rest"), h("dd", {}, `${r.rest_min_minutes} to ${r.rest_ideal_minutes} min`),
-            r.rub ? [h("dt", {}, "Rub"), h("dd", {}, `${r.rub.name}: ` + r.rub.ingredients.map((i) => `${i.parts} ${i.name}`).join(", ") +
+            r.rub ? [h("dt", {}, "Rub"), h("dd", {}, `${r.rub.name} v${r.rub.version}: ` + r.rub.ingredients.map((i) => `${i.parts} ${i.name}`).join(", ") +
               ` (${Math.round(r.rub.sugar * 100)}% sugar, ${Math.round(r.rub.salt * 100)}% salt)`)] : null),
+          r.results.length ? h("div", { class: "scroll results" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Version"), h("th", {}, "Cooks"), h("th", {}, "Average score"), h("th", {}, "Best"), h("th", {}, "Cooks on this version"))),
+            h("tbody", {}, r.results.map((v) => h("tr", {}, h("td", {}, "v" + v.version + (v.version === r.version ? " (current)" : "")), h("td", {}, v.count),
+              h("td", {}, v.avg_score === null ? "–" : v.avg_score), h("td", {}, v.best_score === null ? "–" : v.best_score),
+              h("td", { class: "links" }, v.cooks.map((c, i) => [i ? ", " : "", h("a", { href: "#history/" + encodeURIComponent(c.id) }, (c.opened_at || "").slice(0, 10) + (c.score !== null && c.score !== undefined ? ` (${c.score})` : ""))]))))))) :
+            h("p", { class: "hint" }, "No finished cooks on this recipe yet. Results will be listed here by recipe version."),
           h("div", { class: "actions" }, h("a", { class: "btn", href: "#recipes/edit-recipe:" + encodeURIComponent(r.id) }, r.own ? "Edit" : "Customise"),
             historyButton("recipe", r.id, hist), r.own ? removeButton("recipe", r.id) : null), hist),
         h("details", {}, h("summary", {}, r.id + ".yaml"), h("pre", {}, r.source))); }),
     h("h1", { class: "section" }, "Rubs"),
     rubs.map((r) => { const hist = h("div", {}); return !r.valid ? box(r.id, h("div", { class: "body" }, msg(r.error, "err"))) :
-      box(h("div", { class: "title-row" }, h("h2", {}, r.name), tag(r), h("span", { class: "muted" }, `${Math.round(r.sugar * 100)}% sugar, ${Math.round(r.salt * 100)}% salt`)),
+      box(h("div", { class: "title-row" }, h("h2", {}, r.name), h("span", { class: "badge" }, "v" + r.version), tag(r), h("span", { class: "muted" }, `${Math.round(r.sugar * 100)}% sugar, ${Math.round(r.salt * 100)}% salt`)),
         h("div", { class: "body" }, r.description ? h("p", { class: "sub" }, r.description) : null,
           h("div", { class: "scroll" }, h("table", { class: "ingredients" }, h("thead", {}, h("tr", {}, h("th", {}, "Ingredient"), h("th", {}, "Parts"), h("th", {}, "Share"))),
             h("tbody", {}, r.ingredients.map((i) => h("tr", {}, h("td", {}, i.name + (i.kind ? ` (${i.kind})` : "")), h("td", {}, i.parts),
@@ -594,7 +608,7 @@ async function renderHistory(id) {
     const m = d.meta, res = m.result || {};
     show(h("p", { class: "sub" }, h("a", { href: "#history" }, "← History")),
       h("div", { class: "title-row" }, h("h1", {}, h("b", {}, m.id)), h("span", { class: "badge " + m.status }, m.status === "done" ? "Merged" : m.status === "open" ? "Open" : "Abandoned")),
-      h("p", { class: "sub mono" }, `${m.recipe_name} v${m.recipe_version}` + (m.weight_kg ? ` · ${m.weight_kg} kg` : "") + ` · opened ${fullDate(m.opened_at)}`),
+      h("p", { class: "sub mono" }, `${m.recipe_name} v${m.recipe_version}` + (m.rub ? ` · rub ${m.rub.name} v${m.rub.version}` : "") + (m.weight_kg ? ` · ${m.weight_kg} kg` : "") + ` · opened ${fullDate(m.opened_at)}`),
       box("Result", h("div", { class: "body" }, h("dl", { class: "kv" },
         h("dt", {}, "Score"), h("dd", {}, res.score !== undefined ? `${res.score} / 10` : "–"),
         h("dt", {}, "Yield"), h("dd", {}, res.yield ? `${Math.round(res.yield * 100)}% (${res.cooked_weight_kg} kg cooked)` : "–"),

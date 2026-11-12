@@ -42,12 +42,19 @@ TOOLS = [
      "description": "The rubs available, with ingredients in parts, the share of salt and sugar, and which recipes "
                     "use each.",
      "inputSchema": _obj({})},
+    {"name": "recipe_history",
+     "description": "Every saved version of one of the cook's own recipes or rubs, newest first: when, why (the "
+                    "commit message) and exactly which fields changed from what to what. Combine with the `results` "
+                    "in list_recipes (cooks and scores per recipe version) to judge whether a change helped.",
+     "inputSchema": _obj({"kind": {"type": "string", "enum": ["recipe", "rub"]},
+                          "id": {"type": "string", "description": "Recipe or rub id"}}, ["kind", "id"])},
     {"name": "save_rub",
      "description": "Add or update one of the cook's own rubs. Stored as a YAML file with a commit per save. "
                     "Ingredients are in parts (by volume or weight, the cook's choice, but all the same). Mark salt "
                     "and sugar with kind so the app can warn about scorching and double salting.",
      "inputSchema": _obj({"name": {"type": "string", "description": "Short name, e.g. coffee-chilli"},
                           "description": {"type": "string"},
+                          "change": {"type": "string", "description": "One line on what changed and why"},
                           "ingredients": {"type": "array", "minItems": 1, "items": _obj({
                               "name": {"type": "string"}, "parts": {"type": "number", "exclusiveMinimum": 0},
                               "kind": {"type": "string", "enum": ["salt", "sugar"],
@@ -139,6 +146,8 @@ def _call(service: Service, name: str, a: dict):
         return [{k: v for k, v in r.items() if k != "source"} for r in service.list_recipes()]
     if name == "list_rubs":
         return [{k: v for k, v in r.items() if k != "source"} for r in service.list_rubs()]
+    if name == "recipe_history":
+        return service.item_history(a.get("kind", ""), a.get("id", ""))
     if name == "save_rub":
         return service.save_rub(a)
     if name == "save_recipe":

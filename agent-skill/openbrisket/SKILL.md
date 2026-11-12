@@ -70,6 +70,9 @@ YAML files with a commit per save.
 - A recipe needs a name, a cut that starts with the meat (`beef-`, `pork-`, `lamb-`, `chicken-`, `turkey-`,
   `duck-`, `fish-`, `sausage-`), a pit temperature, a meat target, and exactly one of `hours_per_kg` or
   `hours_fixed`. Ask for whatever is missing; do not invent timings.
+- Before suggesting a change, look at what has been tried: `recipe_history` (or `ob /api/history/recipe/<id>`)
+  lists every version with the reason and the fields that changed, and each recipe's `results` in the recipe list
+  groups its finished cooks and scores by version. Say what the last change was and whether the scores moved.
 - When changing an existing recipe, pass every field again (read it first with `list_recipes`) and put the
   reason in `change`. The version number moves on by itself.
 - Pass on any warning in the reply, such as a sugary rub on a hot pit.

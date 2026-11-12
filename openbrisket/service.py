@@ -176,7 +176,8 @@ class Service:
                 return None
         except (OSError, yaml.YAMLError):
             return None
-        return {"name": doc.get("name"), "description": doc.get("description", ""),
+        return {"name": doc.get("name"), "version": str(doc.get("version", "1.0.0")),
+                "description": doc.get("description", ""),
                 "ingredients": doc.get("ingredients"), **recipes.rub_fractions(doc), "source": source, "doc": doc}
 
     def list_rubs(self) -> list[dict]:
@@ -194,8 +195,39 @@ class Service:
             out.append({"id": rid, "valid": True, "own": self._is_own(path), "used_by": used.get(rid, []), **v})
         return out
 
+    def results(self) -> dict[str, list[dict]]:
+        """Cooks grouped by recipe and then by recipe version: what each version of a recipe actually produced."""
+        store = self.store()
+        by_recipe: dict[str, dict[str, dict]] = {}
+        for cook_id in store.cooks():
+            m = store.meta(cook_id)
+            if m.get("status") != "done":
+                continue
+            res, an = m.get("result") or {}, m.get("analysis") or {}
+            v = by_recipe.setdefault(m.get("recipe_name") or "?", {}).setdefault(
+                str(m.get("recipe_version") or "?"), {"version": str(m.get("recipe_version") or "?"), "cooks": []})
+            v["cooks"].append({
+                "id": cook_id, "opened_at": m.get("opened_at"), "weight_kg": m.get("weight_kg"),
+                "score": res.get("score"), "yield": res.get("yield"), "notes": res.get("notes"),
+                "hours_to_target": an.get("hours_to_target"), "hours_on_pit": an.get("hours_on_pit"),
+                "k_ratio": (an.get("model") or {}).get("k_ratio"),
+                "rub": (m.get("rub") or {}).get("name"), "rub_version": (m.get("rub") or {}).get("version")})
+        out: dict[str, list[dict]] = {}
+        for name, versions in by_recipe.items():
+            rows = []
+            for v in versions.values():
+                scores = [c["score"] for c in v["cooks"] if c["score"] is not None]
+                v["count"] = len(v["cooks"])
+                v["avg_score"] = round(sum(scores) / len(scores), 1) if scores else None
+                v["best_score"] = max(scores) if scores else None
+                v["first_cook"] = min(c["opened_at"] or "" for c in v["cooks"])
+                rows.append(v)
+            out[name] = sorted(rows, key=lambda v: v["first_cook"])
+        return out
+
     def list_recipes(self) -> list[dict]:
         out = []
+        results = self.results()
         rub_files = self._rub_files()
         for rid, path in sorted(self._recipe_files().items()):
             own = self._is_own(path)
@@ -224,6 +256,7 @@ class Service:
                 "wrap_material": r.wrap_material, "rest_min_minutes": r.rest_min_minutes,
                 "rest_ideal_minutes": r.rest_ideal_minutes, "hold_min_c": r.hold_min_c, "rub": rub,
                 "warnings": recipes.warnings(r.raw, rub_doc), "source": source,
+                "results": results.get(r.name, []),
             })
         return out
 
@@ -267,7 +300,7 @@ class Service:
                 raise ServiceError(str(e)) from None
             return {"deleted": library.slug(item_id), "kind": kind}
 
-    def item_history(self, kind: str, item_id: str) -> list[str]:
+    def item_history(self, kind: str, item_id: str) -> list[dict]:
         try:
             return library.history(self.library_root(), kind, item_id)
         except library.LibraryError as e:
@@ -344,6 +377,12 @@ class Service:
                 "plan": [{"at": s.at.isoformat(timespec="minutes"), "step": s.what} for s in p.steps],
                 "recipe": recipe.raw,
             }
+            if recipe.rub:                       # the exact rub used, so the cook still knows it after the rub changes
+                found = recipes.find_rub(recipe.rub, os.path.dirname(recipe.path), self.recipe_dirs)
+                view = self._rub_view(found) if found else None
+                if view:
+                    meta["rub"] = {"name": view["name"], "version": view["version"],
+                                   "ingredients": view["ingredients"]}
             store = self.store()
             if store.active():
                 raise ServiceError(f"cook {store.active()} is still open; close it first")
