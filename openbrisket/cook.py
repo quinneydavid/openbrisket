@@ -198,7 +198,9 @@ class Engine:
         if meat is not None:
             st["samples"].append([round((now - meat_on).total_seconds() / 3600, 4), meat, r.pit])
         row = {"at": _iso(now), "pit": r.pit, "fan": r.fan, "pit_target": r.pit_target, "ambient": r.ambient,
-               "humidity": r.humidity}
+               "humidity": r.humidity, "rain": r.rain}
+        if r.rain:
+            st["rain_minutes"] = st.get("rain_minutes", 0) + 1
         p = self.projection(now) if meat is not None and "target" not in st["said"] else None
         if p and p[0] is not None:
             t_h = (now - meat_on).total_seconds() / 3600
@@ -504,6 +506,7 @@ class Engine:
             out["model"] = {"k_recipe": round(self.prior.k, 4), "k_fitted": round(f.params.k, 4),
                             "k_ratio": round(f.params.k / self.prior.k, 2), "stall_factor": round(f.params.stall_factor, 3),
                             "wrapped_factor": round(f.params.wrapped_factor, 3), "data_weight": round(f.weight, 2)}
+        out["rain_minutes"] = st.get("rain_minutes", 0)
         total = out["hours_to_target"]
         if total and st.get("est_log"):
             marks = {}

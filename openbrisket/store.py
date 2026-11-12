@@ -23,7 +23,7 @@ import yaml
 MAX_PROBES = 9
 # est_off_min = the estimate at that moment, in minutes until the meat comes off (blank before there is one)
 CURVE_FIELDS = ["at", "pit", *[f"probe{n}" for n in range(1, MAX_PROBES + 1)], "fan", "pit_target",
-                "ambient", "humidity", "est_off_min"]
+                "ambient", "humidity", "rain", "est_off_min"]
 GIT_ID = ["-c", "user.name=OpenBrisket", "-c", "user.email=openbrisket@localhost"]
 
 

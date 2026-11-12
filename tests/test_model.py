@@ -67,6 +67,13 @@ class ModelTests(unittest.TestCase):
         self.assertIsNone(model.recent_rate(s[:5]))
 
 
+class RainTests(unittest.TestCase):
+    def test_numbers_and_words_both_become_numbers(self):
+        from openbrisket.sources import _rain
+        self.assertEqual([_rain(x) for x in ("0.0", "3.2", "on", "Raining", "off", "dry", "unavailable", None)],
+                         [0.0, 3.2, 1.0, 1.0, 0.0, 0.0, None, None])
+
+
 class PlanTests(unittest.TestCase):
     def test_timeline(self):
         recipe = brisket()

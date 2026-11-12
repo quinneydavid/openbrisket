@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2
+
+- Rain as a third optional weather sensor, logged with every reading. It takes a number (mm, mm/h) or a wet/dry
+  sensor. The cook's analysis says how long it rained.
+
 ## 0.5.1
 
 - More is logged with every cook: outdoor temperature and humidity (two optional sensors in Settings) and the

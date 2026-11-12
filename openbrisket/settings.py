@@ -26,6 +26,7 @@ source:
     pit_target: sensor.bbq_reader_pit_target
     ambient: ""        # optional: an outdoor temperature sensor, logged with every cook
     humidity: ""       # optional: an outdoor humidity sensor
+    rain: ""           # optional: a rain sensor (a number such as mm, or wet/dry)
 
 # Where notes and photo requests are sent. With no bot token they are printed instead.
 telegram:

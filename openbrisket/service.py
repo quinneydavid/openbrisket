@@ -39,7 +39,7 @@ def _reading_dict(r: sources.Reading | None) -> dict | None:
         return None
     return {"at": r.at.isoformat(timespec="seconds"), "connected": r.connected, "pit_c": r.pit,
             "probes_c": r.probes, "fan_pct": r.fan, "fan_on": r.fan_on, "pit_target_c": r.pit_target,
-            "ambient_c": r.ambient, "humidity_pct": r.humidity}
+            "ambient_c": r.ambient, "humidity_pct": r.humidity, "rain": r.rain}
 
 
 class Service:
@@ -493,7 +493,7 @@ class Service:
                 present = [v for v in probes.values() if v is not None]
                 curve.append({"at": row["at"], "pit_c": num("pit"), "meat_c": min(present) if present else None,
                               "probes_c": probes, "fan_pct": num("fan"), "ambient_c": num("ambient"),
-                              "humidity_pct": num("humidity"), "est_off_min": num("est_off_min")})
+                              "humidity_pct": num("humidity"), "rain": num("rain"), "est_off_min": num("est_off_min")})
         meta = {k: v for k, v in m.items() if k != "recipe"}
         numbers = [int(n) for n in (m.get("probes") or [m.get("probe", 1)])]
         labels = {int(k): v for k, v in (m.get("probe_labels") or {}).items()}

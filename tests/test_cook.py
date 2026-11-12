@@ -88,7 +88,7 @@ class EngineTests(Base):
         with open(os.path.join(self.store.dir(cook_id), "curve.csv")) as f:
             rows = f.read().splitlines()
         self.assertEqual(rows[0], "at,pit," + ",".join(f"probe{n}" for n in range(1, 10))
-                         + ",fan,pit_target,ambient,humidity,est_off_min")
+                         + ",fan,pit_target,ambient,humidity,rain,est_off_min")
         mid = dict(zip(rows[0].split(","), rows[300].split(",")))
         self.assertTrue(0 < float(mid["est_off_min"]) < 15 * 60)      # the estimate is logged with every row
         a = engine.analysis(START + timedelta(hours=15))
@@ -144,6 +144,7 @@ class EngineTests(Base):
         last = None
         for r in cook_readings(scaled(engine.prior, 1.3), step_s=60):
             r.ambient, r.humidity = 29.0, 80.0
+            r.rain = 2.4 if r.at < START + timedelta(minutes=30) else 0.0
             for e in engine.tick(r):
                 if e.kind == "wrap-point":
                     engine.manual("wrap", "", r.at)
@@ -152,6 +153,7 @@ class EngineTests(Base):
         self.assertAlmostEqual(a["model"]["k_ratio"], 1.3, delta=0.1)   # the meat heated 30% faster than the recipe says
         self.assertLess(a["hours_to_target"], a["planned_hours"] - 2)
         self.assertIsNotNone(a["wrapped_at_h"])
+        self.assertEqual(a["rain_minutes"], 30)
         with open(os.path.join(self.store.dir(cook_id), "curve.csv")) as f:
             header, row = f.readline().strip().split(","), f.readline().strip().split(",")
         self.assertEqual((row[header.index("ambient")], row[header.index("humidity")]), ("29.0", "80.0"))

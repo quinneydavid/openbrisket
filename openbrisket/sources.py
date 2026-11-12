@@ -21,6 +21,7 @@ class Reading:
     connected: bool = True
     ambient: float | None = None        # outdoor temperature, deg C (optional)
     humidity: float | None = None       # outdoor relative humidity, % (optional)
+    rain: float | None = None           # rain: the sensor's own number (mm, mm/h), or 1/0 for a wet/dry sensor
 
     def probe(self, number: int) -> float | None:
         """Food probe by its 1-based number."""
@@ -36,6 +37,19 @@ class SourceError(Exception):
 class Source:
     def read(self) -> Reading:
         raise NotImplementedError
+
+
+RAINING = {"on", "true", "wet", "rain", "raining", "rainy", "pouring", "lightning-rainy", "drizzle", "showers"}
+NOT_RAINING = {"off", "false", "dry", "clear", "sunny", "cloudy", "partlycloudy", "fair", "none"}
+
+
+def _rain(state) -> float | None:
+    """A rain sensor can be a number (mm, mm/h) or a word (on/off, raining/dry): both end up as a number."""
+    v = _float(state)
+    if v is not None:
+        return v
+    word = str(state or "").strip().lower()
+    return 1.0 if word in RAINING else 0.0 if word in NOT_RAINING else None
 
 
 def _float(state) -> float | None:
@@ -79,12 +93,13 @@ class HomeAssistantSource(Source):
             pit_target=_float(self._state(e.get("pit_target"))),
             connected=connected == "on",
             ambient=self._optional(e.get("ambient")), humidity=self._optional(e.get("humidity")),
+            rain=self._optional(e.get("rain"), _rain),
         )
 
-    def _optional(self, entity_id: str | None) -> float | None:
+    def _optional(self, entity_id: str | None, parse=_float) -> float | None:
         """Weather sensors are nice to have: a missing one must never stop the cook being followed."""
         try:
-            return _float(self._state(entity_id))
+            return parse(self._state(entity_id))
         except SourceError:
             return None
 
@@ -110,7 +125,7 @@ class ReplaySource(Source):
             at=datetime.fromisoformat(row["at"]),
             pit=_float(row.get("pit")), probes=probes, fan=_float(row.get("fan")),
             fan_on=None, pit_target=_float(row.get("pit_target")), connected=True,
-            ambient=_float(row.get("ambient")), humidity=_float(row.get("humidity")),
+            ambient=_float(row.get("ambient")), humidity=_float(row.get("humidity")), rain=_float(row.get("rain")),
         )
 
 

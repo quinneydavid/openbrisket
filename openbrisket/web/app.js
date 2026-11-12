@@ -567,7 +567,8 @@ function analysisBox(a, curve) {
     a.pit ? ["Pit", `averaged ${a.pit.mean_c} °C (recipe ${a.pit.recipe_c}), from ${a.pit.min_c} to ${a.pit.max_c}, varying ±${a.pit.stdev_c}`] : null,
     a.model ? ["Heating rate", a.model.data_weight ? `${Math.round(a.model.k_ratio * 100)}% of what the recipe assumes` : "not enough readings to tell"] : null,
     a.model && a.stall && a.stall.start_h !== null ? ["Stall slowdown", `meat heated at ${Math.round((a.wrapped_at_h !== null && a.wrapped_at_h !== undefined ? a.model.wrapped_factor : a.model.stall_factor) * 100)}% of its normal rate`] : null,
-    amb.length ? ["Outdoors", `${avg(amb).toFixed(0)} °C` + (hum.length ? `, ${avg(hum).toFixed(0)}% humidity` : "")] : null,
+    amb.length || hum.length || a.rain_minutes ? ["Outdoors", [amb.length ? `${avg(amb).toFixed(0)} °C` : null, hum.length ? `${avg(hum).toFixed(0)}% humidity` : null,
+      a.rain_minutes ? `rain for ${dur(a.rain_minutes)}` : (curve.some((p) => p.rain !== null && p.rain !== undefined) ? "no rain" : null)].filter(Boolean).join(", ")] : null,
     a.estimate ? ["Estimate error", ["at_25pct", "at_50pct", "at_75pct"].filter((k) => a.estimate[k]).map((k) =>
       `${k.slice(3, 5)}% through: ${a.estimate[k].error_h > 0 ? "+" : ""}${dur(a.estimate[k].error_h * 60)}`).join(", ") || "–"] : null,
     a.events && Object.keys(a.events).length ? ["Events", Object.entries(a.events).map(([k, n]) => `${k} ×${n}`).join(", ")] : null,
@@ -609,7 +610,7 @@ async function renderSettings() {
   const save = (ev) => act(ev.target, async () => {
     await api("/api/settings", {
       source: { type: "homeassistant", url: val("s-url"), token: val("s-token"),
-        entities: { pit: val("s-pit"), probes: val("s-probes").split(/\s+/).filter(Boolean).slice(0, 9), fan: val("s-fan"), fan_on: val("s-fanon"), pit_target: val("s-target"), connected: val("s-conn"), ambient: val("s-amb"), humidity: val("s-hum") } },
+        entities: { pit: val("s-pit"), probes: val("s-probes").split(/\s+/).filter(Boolean).slice(0, 9), fan: val("s-fan"), fan_on: val("s-fanon"), pit_target: val("s-target"), connected: val("s-conn"), ambient: val("s-amb"), humidity: val("s-hum"), rain: val("s-rain") } },
       telegram: { bot_token: val("s-bot"), chat_id: val("s-chat") }, poll_seconds: Number(val("s-poll")) || 15 });
     return "Saved.";
   });
@@ -623,6 +624,7 @@ async function renderSettings() {
         h("p", { class: "hint" }, "The order here is the probe number: the first line is probe 1.")),
       f("s-fan", "Fan output entity", e.fan), f("s-fanon", "Fan switched on entity", e.fan_on), f("s-target", "Pit target entity", e.pit_target),
       f("s-amb", "Outdoor temperature entity (optional)", e.ambient), f("s-hum", "Outdoor humidity entity (optional)", e.humidity),
+      f("s-rain", "Rain entity (optional)", e.rain),
       f("s-poll", "Seconds between readings", v.poll_seconds, { type: "number" })),
       h("div", { class: "actions" }, h("button", { class: "primary", type: "button", onclick: save }, "Save"),
         h("button", { type: "button", onclick: (ev) => act(ev.target, async () => {
