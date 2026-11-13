@@ -11,6 +11,8 @@ OpenBrisket reads your pit and meat temperatures and your fan, follows the cook 
 tells you when something needs doing: the stall has started, it is time to wrap, the fire is dying, you
 are running late for dinner. It does not control the fire. Your fan controller keeps doing that.
 
+![An open brisket cook: pipeline, temperatures, estimate, chart and checks](docs/screenshots/cook.png)
+
 ## How it maps
 
 | Infrastructure | Barbecue |
@@ -26,6 +28,21 @@ are running late for dinner. It does not control the fire. Your fan controller k
 | Drift | The pit has left the range the recipe declares |
 | Commit | Every event in a cook: meat on, stall detected, wrap, rest |
 | Merge | Closing a finished cook with its score |
+
+## What it looks like
+
+The screenshots use made-up cooks.
+
+| | |
+|---|---|
+| **A finished cook.** What it showed, against what the recipe assumed, and the whole curve. | **Stacks.** The fire as a file, with results for each version: score, how steady the pit ran, burn rate, hotfixes. |
+| ![A finished cook with its analysis and temperature curve](docs/screenshots/history.png) | ![The Stacks page](docs/screenshots/stacks.png) |
+| **Recipes.** YAML files with a form on top and a history underneath. | **Dark theme.** For the 3 am check. |
+| ![The Recipes page](docs/screenshots/recipes.png) | ![The cook page in the dark theme](docs/screenshots/cook-dark.png) |
+
+**Backup.** Point the app at a private git repository of your own and every change is pushed there.
+
+![The Backup section of the Settings page](docs/screenshots/backup.png)
 
 ## A cook
 
