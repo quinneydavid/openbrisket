@@ -1,33 +1,99 @@
 # OpenBrisket
 
-BBQ as Code. Recipes, rubs and stacks are files in git, every cook is a log of commits, and you get a note whenever the
-meat needs you. We call the method PitOps.
+BBQ as Code. OpenBrisket applies GitOps to smoking meat: recipes, rubs and the fire itself are YAML files in
+git, every cook is a log of commits, and you are paged when the meat needs attention. The method is called
+PitOps.
 
-Smoking meat means changing things: how long it cooks, when it comes off, what goes in the rub. OpenBrisket keeps
-every one of those changes with its reason, and puts the results of each version next to it, so the next change
-is a decision and not a guess.
+A brisket is a fourteen-hour deployment with a fixed deadline (dinner), a single production environment (the
+table) and no rollback. Most cooks are run from memory, with three things changed since last time and no record
+of which one helped.
 
-OpenBrisket reads your pit and meat temperatures and your fan, follows the cook against a recipe, and
-tells you when something needs doing: the stall has started, it is time to wrap, the fire is dying, you
-are running late for dinner. It does not control the fire. Your fan controller keeps doing that.
+PitOps holds that a backyard should be run like a well-governed GitOps organisation. Nothing reaches production
+without a plan. No meat goes on until the pit has passed its smoke test, which is the only smoke test in the
+industry that involves smoke. Every change has an author, a version and a reason. Nobody adds charcoal without
+logging a hotfix. Agents attend the cook, inspect the bark and file their findings in a fixed vocabulary. The
+pitmaster holds final approval and the tongs. On the question of pets versus cattle, PitOps is firmly on the
+side of cattle, and has been since the first brisket. Pets are never cooked. Cowboy deploys are for people
+whose servers are named Gandalf and Frodo and documented in a ring binder and a spreadsheet called
+servers_final_v2.xls.
 
 ![An open brisket cook: pipeline, temperatures, estimate, chart and checks](docs/screenshots/cook.png)
 
+## What it does
+
+- **Plans the cook.** Give it a recipe, the weight and the serving time. It works the whole timeline back from
+  dinner: when to salt, when to light the fire, when the stall is expected, when to wrap, how long to rest.
+- **Watches the pit.** It reads the pit temperature, the meat probes and the fan from Home Assistant and follows
+  the cook against the recipe, with an estimate of the finish time that updates from the cook's own readings.
+- **Pages you.** A note arrives when something needs doing: the pit is ready, the stall has started, it is time
+  to wrap, the fire is dying, the lid has been left open, dinner is going to be late. On Telegram if a bot is
+  set, in the terminal otherwise.
+- **Keeps the record.** Every event in a cook is a commit. A finished cook is closed with a score and notes,
+  and listed under the exact version of the recipe and the stack it ran on.
+- **Shows what a change did.** Each version of a recipe or stack sits next to the cooks it produced: score, how
+  steady the pit ran, burn rate, hotfixes. Change one thing, say why in the commit message, and the next cook
+  answers the question.
+- **Backs itself up.** Point it at a private git repository of your own and every change is pushed there.
+- **Works with agents.** An MCP server and an agent skill let a chat agent plan, follow and close a cook.
+
+OpenBrisket monitors and advises. The fan controller stays in charge of the fire.
+
 ## How it maps
+
+### The basics
 
 | Infrastructure | Barbecue |
 |---|---|
 | Declarative config | A recipe is a YAML file: cut, rub, pit temperature, wrap point, target, rest |
 | Modules | Rubs are files that recipes reference |
 | Stack | The smoker, fuel, wood, water pan and vents, as a YAML file. Yes, a smoke stack. The same recipe runs on any of them |
-| Hotfix | Adding fuel in the middle of a cook |
-| Burn rate | Kilograms of fuel an hour |
 | `plan` | The whole timeline, worked back from the serving time, before anything is lit |
 | `apply` | Opens the cook |
 | Smoke test | The check before the meat goes on. Also the CI job that validates recipes |
-| Drift | The pit has left the range the recipe declares |
 | Commit | Every event in a cook: meat on, stall detected, wrap, rest |
 | Merge | Closing a finished cook with its score |
+| Pull request | A formal request for someone to pull your pork. Also how a recipe joins the built-in set: CI runs the smoke test on it, and reviewers will ask how many times you have cooked it |
+| Approval | The shoulder bone slides out clean |
+| Code review | Somebody else eating it |
+| Rollback | Available for recipes. Unavailable for brisket |
+
+### Operations
+
+| Infrastructure | Barbecue |
+|---|---|
+| Production | The table |
+| Staging | There is none. Every cook is tested on guests |
+| SLO | Dinner at the stated time |
+| Error budget | The rest: 120 minutes ideal, 60 minimum. "Behind schedule" fires when the estimate starts spending it |
+| Monitoring | Pit, meat probes and fan, read every 15 seconds |
+| Paging | The notes. In the example plan below, the stall pages at 04:46 |
+| On-call | You |
+| Agents | They plan the cook, watch it, look at photos of the bark and write it up. They do not get out of bed at 4 am. See On-call |
+| Drift | The pit has left the range the recipe declares |
+| Latency | The stall: the meat sits near 65 °C for hours and nothing appears to happen |
+| Outage | Fire dying: fan at 90% for ten minutes and the pit still low |
+| Hotfix | Adding fuel in the middle of a cook |
+| Burn rate | Kilograms of fuel an hour |
+| Post-incident review | The closing notes. "Flat a little dry." |
+| Change advisory board | Whoever is standing nearest the smoker with an opinion |
+| Separation of duties | The fan controller runs the fire. OpenBrisket watches and reports. You carry the meat |
+| Compliance | A recipe that finishes below the safe temperature for its meat fails the smoke test |
+| Disaster recovery | A new install pointed at your backup repository gets every recipe and cook back, with history |
+
+### Kubernetes
+
+| Infrastructure | Barbecue |
+|---|---|
+| Pets vs cattle | Cattle. This is the one field where the metaphor is literal. Do not name the brisket, and do not cook the pets |
+| Manifest | Every recipe and stack starts with `apiVersion: openbrisket/v1` and a `kind`, because of course it does |
+| Node | The smoker |
+| Replicas | One. A brisket cannot be rescheduled to another node |
+| Liveness probe | Is the fire still alive |
+| Readiness probe | An actual probe, in the actual meat. The coldest one decides when it is done |
+| Horizontal scaling | A second brisket |
+| Vertical scaling | A bigger brisket |
+| Persistent volume | The leftovers |
+| Kubernetes required | No. It is one container. The brisket is already complicated enough |
 
 ## What it looks like
 
