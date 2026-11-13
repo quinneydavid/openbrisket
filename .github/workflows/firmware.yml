@@ -1,0 +1,24 @@
+name: firmware
+
+# The ESP32 reader config in devices/esphome must keep compiling.
+on:
+  pull_request:
+    paths: ["devices/**", ".github/workflows/firmware.yml"]
+  push:
+    branches: [main]
+    paths: ["devices/**", ".github/workflows/firmware.yml"]
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install esphome
+      - name: Compile the example reader
+        working-directory: devices/esphome
+        run: |
+          sed "s|PASTE-YOUR-OWN-KEY-HERE|$(openssl rand -base64 32)|" secrets.example.yaml > secrets.yaml
+          esphome compile bbq-reader.example.yaml

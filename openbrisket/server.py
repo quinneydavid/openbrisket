@@ -8,6 +8,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+import time
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__, apidoc, mcp
@@ -22,7 +25,32 @@ STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/favicon.svg": ("favicon.svg", "image/svg+xml")}
 
 
+WRONG_TOKEN_LIMIT = 10        # wrong tokens accepted per window before they are refused unread
+WRONG_TOKEN_WINDOW_S = 60.0
+
+
+class Throttle:
+    """Slows down token guessing. Wrong tokens are counted over a rolling window; past the limit, a request
+    with a wrong token is refused with 429. A request with a right token is never slowed or refused."""
+
+    def __init__(self, limit: int = WRONG_TOKEN_LIMIT, window_s: float = WRONG_TOKEN_WINDOW_S):
+        self.limit, self.window_s = limit, window_s
+        self._failures: deque = deque()
+        self._lock = threading.Lock()
+
+    def wrong(self) -> bool:
+        """Record a wrong token. Returns True when the limit has been passed."""
+        now = time.monotonic()
+        with self._lock:
+            while self._failures and now - self._failures[0] > self.window_s:
+                self._failures.popleft()
+            self._failures.append(now)
+            return len(self._failures) > self.limit
+
+
 def make_handler(service: Service):
+    throttle = Throttle()
+
     class Handler(BaseHTTPRequestHandler):
         server_version = f"openbrisket/{__version__}"
 
@@ -57,6 +85,9 @@ def make_handler(service: Service):
             None; returns the token's scope when the request may go ahead."""
             scope = self._scope()
             if scope is None:
+                if self.headers.get("Authorization", "")[7:].strip() and throttle.wrong():
+                    self._json({"error": "too many wrong tokens; wait a minute and try again"}, 429)
+                    return None
                 self._json({"error": "access token required"}, 401)
                 return None
             lookup = path
@@ -185,6 +216,8 @@ def make_handler(service: Service):
                                                     body.get("fuel_used_kg")))
                 if path == "/api/settings":
                     return self._json(service.save_settings(body))
+                if path == "/api/settings/new-token":
+                    return self._json(service.new_access_token())
                 if path == "/api/settings/test-source":
                     return self._json(service.test_source())
                 if path == "/api/settings/test-notify":

@@ -90,6 +90,13 @@ class Service:
                 settings.update({"access": {"token": token}})
             return token
 
+    def new_access_token(self) -> dict:
+        """Replace the main access token. The old one stops working at once; minted tokens are not touched."""
+        with self.lock:
+            token = secrets.token_urlsafe(24)
+            settings.update({"access": {"token": token}})
+            return {"token": token}
+
     # --- tokens with limited rights ---------------------------------------------------------------
     @staticmethod
     def _hash(token: str) -> str:

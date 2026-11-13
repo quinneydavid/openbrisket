@@ -33,8 +33,12 @@ Things worth knowing:
 - If the fan controller stops showing up on Bluetooth with no phone attached, switch it off and on.
 - The thermometer hangs up about 31 seconds after each connection. The reader reconnects, so its
   readings arrive in bursts.
-- The readings in these files were checked against the Inkbird app. The files were split out of one
-  working config and have not been compiled in this split form yet.
+- The readings in these files were checked against the Inkbird app. The example device is compiled on every
+  change (the `firmware` job).
+
+To flash it: copy `secrets.example.yaml` to `secrets.yaml` and `bbq-reader.example.yaml` to `bbq-reader.yaml`,
+fill in your Wi-Fi and the two Bluetooth addresses (a Bluetooth scanner app on your phone, such as nRF Connect, shows them
+while the devices are switched on), then `esphome run bbq-reader.yaml`.
 
 ## Adding a device
 

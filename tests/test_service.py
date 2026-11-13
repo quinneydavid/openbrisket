@@ -607,6 +607,29 @@ class HttpTests(Base):
         self.assertEqual(spec["paths"]["/api/log"]["post"]["x-required-scope"], "write")
         self.assertEqual(spec["paths"]["/api/plan"]["post"]["x-required-scope"], "read")
 
+    def test_the_main_token_can_be_replaced(self):
+        minted = self.req("/api/tokens", {"name": "screen", "scope": "read"})[1]["token"]
+        self.assertEqual(self.req("/api/settings/new-token", {}, token=minted)[0], 403)
+        old = self.token
+        code, body, _ = self.req("/api/settings/new-token", {})
+        self.assertEqual(code, 200)
+        self.assertNotEqual(body["token"], old)
+        self.assertEqual(self.req("/api/status", token=old)[0], 401)
+        self.assertEqual(self.req("/api/status", token=body["token"])[0], 200)
+        self.assertEqual(self.req("/api/status", token=minted)[0], 200)         # minted tokens are not touched
+
+    def test_wrong_tokens_are_slowed_but_right_ones_never(self):
+        codes = [self.req("/api/status", token=f"guess-{i}")[0] for i in range(server.WRONG_TOKEN_LIMIT + 3)]
+        self.assertEqual(codes[:server.WRONG_TOKEN_LIMIT], [401] * server.WRONG_TOKEN_LIMIT)
+        self.assertEqual(codes[-3:], [429, 429, 429])
+        self.assertEqual(self.req("/api/status")[0], 200)                       # the right token still works
+        self.assertEqual(self.req("/api/status", token=None)[0], 401)           # no token at all is not a guess
+        t = server.Throttle(limit=2, window_s=0.05)
+        self.assertEqual([t.wrong(), t.wrong(), t.wrong()], [False, False, True])
+        import time
+        time.sleep(0.08)
+        self.assertFalse(t.wrong())                                             # the window rolls on
+
     def test_every_route_is_in_the_api_description(self):
         import re
         from openbrisket import apidoc

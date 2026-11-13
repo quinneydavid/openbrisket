@@ -55,6 +55,7 @@ ENDPOINTS += [
     ("POST", "/api/tokens", "Settings", "Mint a token with read, write or admin rights. The value is shown once.",
      {"name": "kitchen display", "scope": "read"}),
     ("POST", "/api/tokens/revoke", "Settings", "Revoke a minted token by its id.", {"id": "1a2b3c4d"}),
+    ("POST", "/api/settings/new-token", "Settings", "Replace the main access token. The old one stops working at once.", {}),
     ("GET", "/api/stacks", "Stacks", "Every stack: smoker, fuel, wood, water pan, vents, source, and results per version.", None),
     ("POST", "/api/stacks", "Stacks", "Add or change one of your own stacks. A changed stack gets the next version.",
      {"name": "kamado-lump-oak", "smoker": {"type": "kamado", "model": "Classic"},
@@ -66,7 +67,7 @@ ENDPOINTS += [
     ("GET", "/api/stacks/vocabulary", "Stacks", "The allowed kinds of smoker, fuel, wood form and air control.", None),
 ]
 PUBLIC = {"/healthz", "/api/openapi.json"}
-ADMIN = {"/api/settings", "/api/settings/test-source", "/api/settings/test-notify", "/api/delete", "/api/tokens",
+ADMIN = {"/api/settings", "/api/settings/new-token", "/api/settings/test-source", "/api/settings/test-notify", "/api/delete", "/api/tokens",
          "/api/tokens/revoke"}
 READ_POSTS = {"/api/plan", "/mcp"}       # POSTs that change nothing (/mcp checks each tool itself)
 

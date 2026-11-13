@@ -1,13 +1,16 @@
 # OpenBrisket in one container. Open http://localhost:8321 and paste the access token from the log:
 #   docker compose logs openbrisket | grep "access token"
+#
+#   docker compose up -d            pulls the published image
+#   docker compose up -d --build    builds it from this folder instead
 services:
   openbrisket:
+    image: ghcr.io/quinneydavid/openbrisket:latest
     build: .
-    image: openbrisket:0.10.0
     restart: unless-stopped
     ports:
       - "8321:8321"
     volumes:
-      - openbrisket-data:/data      # settings and your private cook log
+      - openbrisket-data:/data      # settings, your recipes and stacks, and your private cook log
 volumes:
   openbrisket-data:

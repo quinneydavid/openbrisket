@@ -73,17 +73,47 @@ While `run` is going it leaves notes (on Telegram if you set a bot, in the termi
 | Rest | Minimum and ideal rest reached |
 | Hold | Meat within 4 °C of the holding floor, and again if it drops below it |
 
-## Run it
+## What you need
 
-With Docker:
+- A smoker with a thermometer that something can read. Supported out of the box: Inkbird's ISC-027BW fan
+  controller and IBT-26S thermometer, through a small ESP32 board (about the price of a bag of charcoal).
+  Anything else that is already in Home Assistant works too.
+- [Home Assistant](https://www.home-assistant.io). OpenBrisket reads its temperatures from there.
+- Somewhere to run one Docker container: a home server, a NAS, a Raspberry Pi.
+
+## Get it running
+
+**1. The reader** (skip this if your thermometer is already in Home Assistant). Flash the ESP32 with
+[ESPHome](https://esphome.io):
 
 ```console
-$ docker compose up -d
-$ docker compose logs openbrisket | grep "access token"
+$ pip install esphome
+$ cd devices/esphome
+$ cp secrets.example.yaml secrets.yaml          # your Wi-Fi, and a key from: openssl rand -base64 32
+$ cp bbq-reader.example.yaml bbq-reader.yaml    # put in your devices' Bluetooth addresses
+$ esphome run bbq-reader.yaml                   # board plugged in over USB the first time
 ```
 
-Open http://localhost:8321, paste the access token once, and set where readings come from on the
-Settings page. Settings and your cook log live in the `openbrisket-data` volume.
+Home Assistant then finds the board by itself and offers to add it. [devices/](devices/README.md) has the
+details and the things worth knowing about each device.
+
+**2. The app.**
+
+```console
+$ docker run -d --name openbrisket -p 8321:8321 -v openbrisket-data:/data ghcr.io/quinneydavid/openbrisket:latest
+$ docker logs openbrisket | grep "access token"
+```
+
+Or clone this repository and run `docker compose up -d` (add `--build` to build the image yourself).
+
+**3. Connect them.** Open http://localhost:8321 and paste the access token once. On the Settings page give the
+address of Home Assistant, a long-lived access token (make a Home Assistant user for it that can only read),
+and the entity for each value. "Test saved settings" shows a live reading when it is right. A Telegram bot for
+notes is optional.
+
+**4. Cook.** Describe your smoker and fuel once under Stacks, pick a recipe, give the serving time, press Apply.
+
+Settings, your recipes and your cook log live in the `openbrisket-data` volume.
 
 Without Docker (Python 3.10 or newer, and git):
 
@@ -118,8 +148,9 @@ OpenBrisket is not affiliated with GitHub.
 
 Everything under `/api` and `/mcp` needs a token. The main access token has full rights. On the Settings
 page you can mint more with fewer: `read` (look and plan), `write` (also run a cook and save recipes) or
-`admin`. Give each agent or screen its own, and revoke it when it is no longer needed. Put the page behind HTTPS (a reverse proxy)
-before reaching it from outside your home network.
+`admin`. Give each agent or screen its own, and revoke it when it is no longer needed. The main token can be
+replaced there too. Put the page behind HTTPS (a reverse proxy) before reaching it from outside your home
+network; see [SECURITY.md](SECURITY.md).
 
 ## Agents
 
@@ -227,6 +258,11 @@ People have been wiring computers to smokers for a long time. Thanks in particul
 [PitmasterPi](https://github.com/justindean/PitmasterPi) and
 [inkbird-ble-ha](https://github.com/777Timo/inkbird-ble-ha), whose notes on the ISC-027BW protocol
 the reader firmware here follows. OpenBrisket is not affiliated with Inkbird.
+
+## Contributing
+
+Recipes, rubs and stacks are welcome as pull requests, and so is support for more thermometers. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licence
 

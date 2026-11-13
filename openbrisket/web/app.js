@@ -243,6 +243,9 @@ function eventLog(events) {
 }
 
 // ------------------------------------------------------------------------------------------ views
+// The token travels with every request, so plain http is only acceptable at home.
+const plainHttp = () => location.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+const httpWarning = () => plainHttp() ? msg("This page is not on HTTPS, so the access token travels unprotected. That is acceptable on your home network. Put OpenBrisket behind a reverse proxy with HTTPS before reaching it from anywhere else.", "err") : null;
 function loginView() {
   const input = h("input", { type: "password", id: "tok", autocomplete: "off", required: true });
   const form = h("form", { class: "box", onsubmit: async (ev) => {
@@ -251,6 +254,7 @@ function loginView() {
     try { await api("/api/status"); try { localStorage.setItem("openbrisket.token", token); } catch (e) { /* ignore */ } route(); }
     catch (e) { form.querySelectorAll(".msg").forEach((x) => x.remove()); form.querySelector(".body").append(msg("That token was not accepted.", "err")); }
   } }, h("header", {}, h("h2", {}, "Access token")), h("div", { class: "body" },
+    httpWarning(),
     h("p", { class: "sub" }, "OpenBrisket prints its access token when it starts (look at the container log). Paste it here once; this browser remembers it."),
     h("div", { class: "fields" }, h("div", {}, h("label", { for: "tok" }, "Token"), input)),
     h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Open"))));
@@ -910,7 +914,7 @@ async function renderSettings() {
       telegram: { bot_token: val("s-bot"), chat_id: val("s-chat") }, poll_seconds: Number(val("s-poll")) || 15 });
     return "Saved.";
   });
-  show(h("h1", {}, "Settings"),
+  show(h("h1", {}, "Settings"), httpWarning(),
     box("Readings: Home Assistant", h("div", { class: "body" }, h("div", { class: "fields" },
       f("s-url", "Home Assistant address", v.source.url, { placeholder: "http://homeassistant.local:8123" }),
       f("s-token", "Long-lived access token", "", { type: "password", placeholder: v.source.token_set ? "saved; leave empty to keep" : "not set" }),
@@ -952,7 +956,18 @@ async function renderSettings() {
         h("dt", {}, "API"), h("dd", { class: "mono" }, location.origin + "/api/status"),
         h("dt", {}, "Main access token (admin)"), h("dd", {}, h("details", {}, h("summary", {}, "Show"), h("span", { class: "mono" }, v.access_token))),
         h("dt", {}, "Cook log"), h("dd", { class: "mono" }, v.cooks_path)),
-      h("div", { class: "actions" }, h("button", { type: "button", onclick: () => { try { localStorage.removeItem("openbrisket.token"); } catch (e) { /* ignore */ } token = null; route(); } }, "Forget the token in this browser")))));
+      h("div", { class: "actions" }, h("button", { type: "button", onclick: () => { try { localStorage.removeItem("openbrisket.token"); } catch (e) { /* ignore */ } token = null; route(); } }, "Forget the token in this browser"),
+        h("button", { type: "button", class: "danger", onclick: async (ev) => {
+          if (!confirm("Replace the main access token? The old one stops working at once: every agent and browser using it needs the new one. Minted tokens keep working.")) return;
+          const holder = ev.target.closest(".box");
+          holder.querySelectorAll(".msg").forEach((m) => m.remove());
+          try {
+            const out = await api("/api/settings/new-token", {});
+            token = out.token;
+            try { localStorage.setItem("openbrisket.token", token); } catch (e) { /* ignore */ }
+            holder.querySelector(".body").append(h("div", { class: "msg ok", role: "status" }, h("div", {}, "New main access token. This browser has it already; give it to anything else that used the old one."), h("pre", {}, out.token)));
+          } catch (e) { holder.querySelector(".body").append(msg(e.message, "err")); }
+        } }, "Replace the main access token")))));
 }
 
 // ----------------------------------------------------------------------------------------- router

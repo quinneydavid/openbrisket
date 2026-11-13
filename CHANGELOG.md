@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.0
+
+- The main access token can be replaced on the Settings page (`POST /api/settings/new-token`). The old one stops
+  working at once; minted tokens are not touched.
+- Wrong tokens are counted, and past ten a minute they are refused unread (429). A right token is never slowed.
+- The page warns when it is not on HTTPS.
+- A release job publishes the image for amd64 and arm64 to `ghcr.io` when a version tag is pushed.
+- The reader firmware in `devices/esphome` is compiled in CI, with a `secrets.example.yaml` to start from.
+- README: what you need and how to get it running, from an empty board to the first cook. CONTRIBUTING and
+  SECURITY notes.
+
 ## 0.10.0
 
 - Stacks as code. A stack is a third kind of file beside recipes and rubs (`kind: Stack`, in `stacks/`): the
