@@ -216,6 +216,10 @@ def make_handler(service: Service):
                                                     body.get("fuel_used_kg")))
                 if path == "/api/settings":
                     return self._json(service.save_settings(body))
+                if path == "/api/backup":
+                    return self._json(service.save_backup(body.get("url"), body.get("token") or ""))
+                if path == "/api/backup/now":
+                    return self._json(service.backup_now())
                 if path == "/api/settings/new-token":
                     return self._json(service.new_access_token())
                 if path == "/api/settings/test-source":

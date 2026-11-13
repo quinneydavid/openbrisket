@@ -168,8 +168,15 @@ and publishes those values, and explains how to add another device.
 
 ## Your data
 
-- Cooks are written to a git repository on your own machine. Nothing is uploaded. If you want an
-  off-site copy, add a remote to that repository yourself, and make it a private one.
+- Your recipes, rubs, stacks and cooks are one git repository in the app's data folder. Every save and
+  every cook event is a commit.
+- **Backup.** On the Settings page, give the app the address of an empty private repository of your own
+  (GitHub, Gitea, Forgejo, anything that speaks HTTPS) and a token that can read and write its contents.
+  Every change is pushed there within a minute. A change you make in that repository, such as editing a
+  recipe in the browser, is pulled in. A new install pointed at the same repository gets everything back,
+  with its history.
+- Settings, tokens and working files are never part of that repository. The page warns if the repository
+  can be read by anyone.
 - Only text is stored: events, temperatures, scores. No photos.
 - Recipes are the part meant for sharing. The built-in ones live in this repository and changes come as pull
   requests. Your own stay in your library until you choose to share one.

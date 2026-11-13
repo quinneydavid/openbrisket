@@ -34,9 +34,14 @@ telegram:
   bot_token: ""
   chat_id: ""
 
-# Your cooks. A private git repository on this machine; nothing is pushed unless you add a remote.
+# Your cooks. With recipes they form one git repository in the data folder.
 cooks:
-  path: ""             # default: <data folder>/cooks
+  path: ""             # default: <data folder>/cooks (a different place is not backed up)
+
+# A copy of your recipes and cooks on a git host. Use an empty PRIVATE repository of your own.
+backup:
+  url: ""              # e.g. https://github.com/you/my-barbecue.git
+  token: ""            # a token that can read and write the contents of that one repository
 
 # Seconds between readings while a cook is running.
 poll_seconds: 15

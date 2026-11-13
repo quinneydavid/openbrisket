@@ -17,7 +17,7 @@ import subprocess
 
 import yaml
 
-from . import recipes, stacks
+from . import recipes, repo, stacks
 
 GIT_ID = ["-c", "user.name=OpenBrisket", "-c", "user.email=openbrisket@localhost"]
 SUBDIR = {"recipe": "", "rub": "rubs", "stack": "stacks"}      # where each kind of file lives in the library
@@ -41,6 +41,8 @@ def _git(root: str, *args: str) -> str:
 
 def ensure(root: str) -> None:
     os.makedirs(os.path.join(root, "rubs"), mode=0o700, exist_ok=True)
+    if repo.covered(root):                    # part of the one repository in the data folder
+        return
     if not os.path.isdir(os.path.join(root, ".git")):
         subprocess.run(["git", "init", "-q", "-b", "main", root], check=True, capture_output=True)
         with open(os.path.join(root, "README.md"), "w", encoding="utf-8") as f:
@@ -50,9 +52,10 @@ def ensure(root: str) -> None:
 
 
 def _commit(root: str, message: str) -> None:
-    _git(root, "add", "-A")
-    if _git(root, "status", "--porcelain").strip():
-        _git(root, "commit", "-q", "-m", message)
+    with repo.LOCK:
+        _git(root, "add", "-A")
+        if _git(root, "status", "--porcelain").strip():
+            _git(root, "commit", "-q", "-m", message)
 
 
 def _num(value, name: str, required: bool = True):
@@ -456,14 +459,14 @@ def _changes(before: dict | None, after: dict | None) -> list[dict]:
 def history(root: str, kind: str, item_id: str, limit: int = 50) -> list[dict]:
     """Every saved version of a recipe, rub or stack, newest first, each with what changed from the one before."""
     rel = os.path.join(SUBDIR[kind], slug(item_id) + ".yaml")
-    if not os.path.isdir(os.path.join(root, ".git")):
+    if not repo.has_repo(root):
         return []
     lines = _git(root, "log", f"-{limit}", "--format=%H|%aI|%s", "--", rel).splitlines()
     entries, previous = [], None
     for line in reversed(lines):                      # oldest first, to compare each with the one before
         sha, at, message = line.split("|", 2)
         try:
-            doc = yaml.safe_load(_git(root, "show", f"{sha}:{rel}"))
+            doc = yaml.safe_load(_git(root, "show", f"{sha}:./{rel}"))
         except (LibraryError, yaml.YAMLError):
             doc = None                                # the commit that deleted the file
         entries.append({"at": at, "message": message, "version": str(doc.get("version", "")) if doc else None,

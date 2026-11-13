@@ -3,8 +3,8 @@ LABEL org.opencontainers.image.title="openbrisket" \
       org.opencontainers.image.description="BBQ as Code: recipes, rubs and stacks in git, a cook log with history, and notes when the meat needs you" \
       org.opencontainers.image.source="https://github.com/quinneydavid/openbrisket" \
       org.opencontainers.image.licenses="MIT"
-# git keeps the cook log; PyYAML is the only Python dependency.
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
+# git keeps recipes and cooks (and pushes the backup); PyYAML is the only Python dependency.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir "PyYAML==6.0.2"
 RUN mkdir -p /data && chown 1000:1000 /data
 COPY recipes /app/recipes

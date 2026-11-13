@@ -20,6 +20,8 @@ from datetime import datetime
 
 import yaml
 
+from . import repo
+
 MAX_PROBES = 9
 # est_off_min = the estimate at that moment, in minutes until the meat comes off (blank before there is one)
 CURVE_FIELDS = ["at", "pit", *[f"probe{n}" for n in range(1, MAX_PROBES + 1)], "fan", "pit_target",
@@ -48,6 +50,8 @@ class Store:
 
     def ensure(self) -> None:
         os.makedirs(self.root, mode=0o700, exist_ok=True)
+        if repo.covered(self.root):               # part of the one repository in the data folder
+            return
         if not os.path.isdir(os.path.join(self.root, ".git")):
             subprocess.run(["git", "init", "-q", "-b", "main", self.root], check=True, capture_output=True)
             with open(os.path.join(self.root, ".gitignore"), "w", encoding="utf-8") as f:
@@ -58,9 +62,10 @@ class Store:
             self._git("commit", "-q", "-m", "init cook log")
 
     def commit(self, message: str) -> None:
-        self._git("add", "-A")
-        if self._git("status", "--porcelain").strip():
-            self._git("commit", "-q", "-m", message)
+        with repo.LOCK:
+            self._git("add", "-A")
+            if self._git("status", "--porcelain").strip():
+                self._git("commit", "-q", "-m", message)
 
     def log(self, cook_id: str, limit: int = 20) -> list[str]:
         out = self._git("log", f"-{limit}", "--format=%ad %s", "--date=format:%d %b %H:%M", "--", cook_id)

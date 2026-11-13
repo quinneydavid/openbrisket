@@ -900,6 +900,33 @@ async function renderApi() {
     ["Cook", "History", "Recipes", "Stacks", "Settings", "Agents"].filter((g) => groups[g]).map((g) => box(g, groups[g].map(row))));
 }
 
+function backupBox(b) {
+  if (!b.available) return box("Backup", h("div", { class: "body" }, h("p", { class: "sub" }, "Not available here: " + b.reason + ".")));
+  const told = (out) => {
+    if (out.ok === false) throw new Error(out.error);
+    const d = out.done || {};
+    if (d.restored) return "Brought back everything from the repository.";
+    const parts = [d.pulled ? `pulled ${d.pulled} change${d.pulled === 1 ? "" : "s"}` : null, d.pushed ? `pushed ${d.pushed} change${d.pushed === 1 ? "" : "s"}` : null].filter(Boolean);
+    return parts.length ? cap(parts.join(", ")) + "." : "Already up to date.";
+  };
+  const again = (ev, fn) => act(ev.target, async () => { const text = await fn(); setTimeout(renderSettings, 2500); return text; });
+  const state = !b.configured ? h("p", { class: "hint" }, "Not set. Everything is kept on this machine only.") :
+    b.error ? msg("Last try failed: " + b.error + ".", "err") :
+    h("p", { class: "hint" }, (b.waiting ? `${b.waiting} change${b.waiting === 1 ? "" : "s"} waiting to be pushed. ` : b.last_ok_at ? "Up to date. " : "") + (b.last_ok_at ? "Last exchange " + fullDate(b.last_ok_at) + "." : ""));
+  return box("Backup: your own git repository", h("div", { class: "body" },
+    h("p", { class: "sub" }, "Your recipes, rubs, stacks and cooks are one git repository on this machine. Give it an empty private repository of your own (GitHub, Gitea, Forgejo ...) and every change is pushed there within a minute. Changes you make in that repository are pulled in. A new install pointed at it gets everything back. Photos and settings are never part of it."),
+    b.configured && b.public ? msg("Anyone can read this repository. Your cooks are in it: make it private unless you mean to publish them.", "err") : null,
+    state,
+    h("div", { class: "fields" },
+      field("b-url", "Repository address", b.url, { placeholder: "https://github.com/you/my-barbecue.git" }),
+      h("div", {}, h("label", { for: "b-token" }, "Token"),
+        h("input", { id: "b-token", type: "password", autocomplete: "off", placeholder: b.token_set ? "saved; leave empty to keep" : "read and write on that repository's contents" }))),
+    h("div", { class: "actions" },
+      h("button", { class: "primary", type: "button", onclick: (ev) => again(ev, async () => told(await api("/api/backup", { url: fv("b-url"), token: fv("b-token") }))) }, "Save and back up"),
+      b.configured ? h("button", { type: "button", onclick: (ev) => again(ev, async () => told(await api("/api/backup/now", {}))) }, "Back up now") : null,
+      b.configured ? h("button", { type: "button", class: "danger", onclick: (ev) => { if (confirm("Stop backing up? The repository itself is not touched.")) again(ev, async () => { await api("/api/backup", { url: "" }); return "Backup removed."; }); } }, "Stop backing up") : null)));
+}
+
 async function renderSettings() {
   const v = await api("/api/settings");
   const e = v.source.entities || {};
@@ -934,6 +961,7 @@ async function renderSettings() {
       f("s-bot", "Bot token", "", { type: "password", placeholder: v.telegram.bot_token_set ? "saved; leave empty to keep" : "not set" }), f("s-chat", "Chat id", v.telegram.chat_id)),
       h("div", { class: "actions" }, h("button", { class: "primary", type: "button", onclick: save }, "Save"),
         h("button", { type: "button", onclick: (ev) => act(ev.target, async () => { const r = await api("/api/settings/test-notify", {}); if (!r.ok) throw new Error(r.error); return "Test note sent."; }) }, "Send a test note")))),
+    backupBox(v.backup),
     box("Tokens", h("div", { class: "body" },
       h("p", { class: "sub" }, "Give each agent or screen its own token with only the rights it needs. Read can look and plan. Write can also run a cook and save recipes. Admin can also change these settings, delete, and mint tokens."),
       v.tokens.length ? h("div", { class: "scroll" }, h("table", { class: "tokens" }, h("thead", {}, h("tr", {}, h("th", {}, "Name"), h("th", {}, "Rights"), h("th", {}, "Made"), h("th", {}, ""))),

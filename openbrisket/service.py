@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 import yaml
 
-from . import checks as checkmod, library, notify, plan as planmod, recipes, settings, stacks, smoketest, sources
+from . import checks as checkmod, library, notify, plan as planmod, recipes, repo, settings, stacks, smoketest, sources
 from .cook import Engine
 from .store import MAX_PROBES, Store
 
@@ -66,6 +66,12 @@ class Service:
         self.last_error: str | None = None
         self.recipe_dirs = recipe_dirs or self._default_recipe_dirs()
         self._stop = threading.Event()
+        self._backup_busy = threading.Lock()
+        try:                                   # recipes and cooks in one repository (joins older separate ones)
+            self.book = repo.unify(settings.home(), self.library_root(), settings.cooks_path(self.cfg()))
+        except Exception as ex:                # never stop the app over this; it is tried again at the next start
+            self.book = False
+            print(f"repository: {ex!r}", flush=True)
 
     # --- settings ---------------------------------------------------------------------------------
     @staticmethod
@@ -155,7 +161,87 @@ class Service:
             "telegram": {"bot_token_set": bool(tg.get("bot_token")), "chat_id": tg.get("chat_id") or ""},
             "poll_seconds": cfg.get("poll_seconds", 15),
             "cooks_path": settings.cooks_path(cfg),
+            "backup": self.backup_view(),
         }
+
+    # --- the copy of your recipes and cooks on a git host -----------------------------------------
+    def backup_view(self) -> dict:
+        """The backup, for the Settings page. The token is never sent back, only whether it is set."""
+        b = self.cfg().get("backup") or {}
+        home = settings.home()
+        view = {"available": bool(self.book), "url": b.get("url") or "", "token_set": bool(b.get("token")),
+                "configured": bool(b.get("url"))}
+        if not self.book:
+            view["reason"] = ("recipes and cooks are kept outside the data folder, or the data folder is already "
+                              "a git repository of another kind")
+            return view
+        if view["configured"]:
+            st = repo.load_state(home)
+            view.update(last_ok_at=st.get("last_ok_at"), last_try_at=st.get("last_try_at"),
+                        error=st.get("error"), public=bool(st.get("public")), waiting=repo.waiting(home))
+        return view
+
+    def backup_now(self) -> dict:
+        """Pull and push now. Returns the backup view with what was done, or with the error."""
+        b = self.cfg().get("backup") or {}
+        if not self.book or not b.get("url"):
+            raise ServiceError("no backup repository is set")
+        home = settings.home()
+        with self._backup_busy:
+            try:
+                done = repo.sync(home, b["url"], b.get("token") or None)
+                repo.save_state(home, last_ok_at=repo.now(), last_try_at=repo.now(), error=None)
+            except repo.RepoError as e:
+                repo.save_state(home, last_try_at=repo.now(), error=str(e))
+                return dict(self.backup_view(), ok=False)
+        return dict(self.backup_view(), ok=True, done=done)
+
+    def save_backup(self, url: str, token: str = "") -> dict:
+        """Set (or, with an empty address, remove) the repository your recipes and cooks are copied to, and
+        exchange with it straight away. An empty token keeps the saved one."""
+        if not self.book:
+            raise ServiceError("backup is not available: " + self.backup_view()["reason"])
+        home = settings.home()
+        url = str(url or "").strip()
+        if not url:
+            with self.lock:
+                settings.update({"backup": {"url": "", "token": ""}})
+            repo.forget(home)
+            return self.backup_view()
+        try:
+            url = repo.check_url(url)
+        except repo.RepoError as e:
+            raise ServiceError(str(e)) from None
+        patch = {"url": url}
+        if str(token or "").strip():
+            patch["token"] = str(token).strip()
+        with self.lock:
+            settings.update({"backup": patch})
+        try:
+            public = repo.is_public(url)
+        except Exception:
+            public = False
+        repo.save_state(home, public=public)
+        return self.backup_now()
+
+    def backup_forever(self, every_s: float = 60.0, retry_s: float = 600.0) -> None:
+        """Push new commits within a minute. After a failure, try again every ten minutes."""
+        last_try = 0.0
+        while not self._stop.wait(every_s):
+            try:
+                b = self.cfg().get("backup") or {}
+                if not self.book or not b.get("url"):
+                    continue
+                home = settings.home()
+                failed = bool(repo.load_state(home).get("error"))
+                if failed and time.monotonic() - last_try < retry_s:
+                    continue
+                if repo.waiting(home) == 0 and not failed and time.monotonic() - last_try < retry_s:
+                    continue                    # nothing new here; still look for changes there every ten minutes
+                last_try = time.monotonic()
+                self.backup_now()
+            except Exception as ex:
+                print(f"backup: {ex!r}", flush=True)
 
     def save_settings(self, body: dict) -> dict:
         """Apply a settings form. Empty secret fields mean 'keep what is there'."""
@@ -827,6 +913,7 @@ class Service:
     def start_runner(self) -> threading.Thread:
         t = threading.Thread(target=self.run_forever, name="openbrisket-runner", daemon=True)
         t.start()
+        threading.Thread(target=self.backup_forever, name="openbrisket-backup", daemon=True).start()
         return t
 
     def stop(self) -> None:

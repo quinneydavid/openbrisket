@@ -56,6 +56,9 @@ ENDPOINTS += [
      {"name": "kitchen display", "scope": "read"}),
     ("POST", "/api/tokens/revoke", "Settings", "Revoke a minted token by its id.", {"id": "1a2b3c4d"}),
     ("POST", "/api/settings/new-token", "Settings", "Replace the main access token. The old one stops working at once.", {}),
+    ("POST", "/api/backup", "Settings", "Set the git repository your recipes and cooks are copied to, and exchange with it now. An empty url removes it; an empty token keeps the saved one.",
+     {"url": "https://github.com/you/my-barbecue.git", "token": ""}),
+    ("POST", "/api/backup/now", "Settings", "Pull from and push to the backup repository now.", {}),
     ("GET", "/api/stacks", "Stacks", "Every stack: smoker, fuel, wood, water pan, vents, source, and results per version.", None),
     ("POST", "/api/stacks", "Stacks", "Add or change one of your own stacks. A changed stack gets the next version.",
      {"name": "kamado-lump-oak", "smoker": {"type": "kamado", "model": "Classic"},
@@ -67,7 +70,7 @@ ENDPOINTS += [
     ("GET", "/api/stacks/vocabulary", "Stacks", "The allowed kinds of smoker, fuel, wood form and air control.", None),
 ]
 PUBLIC = {"/healthz", "/api/openapi.json"}
-ADMIN = {"/api/settings", "/api/settings/new-token", "/api/settings/test-source", "/api/settings/test-notify", "/api/delete", "/api/tokens",
+ADMIN = {"/api/settings", "/api/settings/new-token", "/api/settings/test-source", "/api/settings/test-notify", "/api/delete", "/api/tokens", "/api/backup", "/api/backup/now",
          "/api/tokens/revoke"}
 READ_POSTS = {"/api/plan", "/mcp"}       # POSTs that change nothing (/mcp checks each tool itself)
 

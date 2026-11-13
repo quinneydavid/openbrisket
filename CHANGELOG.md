@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.12.0
+
+- Backup to a git repository of your own, set on the Settings page (`POST /api/backup`, `POST /api/backup/now`).
+  Every change is pushed within a minute, changes made in the repository are pulled in, and a new install
+  pointed at it gets everything back with its history. The page warns when the repository is public.
+- Recipes, rubs, stacks and cooks are now one git repository in the data folder (`recipes/`, `cooks/`). An
+  install from an earlier version is joined into it on first start, keeping the history of both; the old
+  repositories are kept in `.migrated/`.
+- The image carries CA certificates, so git can reach an HTTPS host.
+
 ## 0.11.0
 
 - The main access token can be replaced on the Settings page (`POST /api/settings/new-token`). The old one stops

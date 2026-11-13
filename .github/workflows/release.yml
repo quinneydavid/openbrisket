@@ -1,6 +1,6 @@
 name: release
 
-# Push a tag such as v0.11.0 and the image is built for amd64 and arm64 and published to
+# Push a tag such as v0.12.0 and the image is built for amd64 and arm64 and published to
 # ghcr.io/<owner>/openbrisket with that version and `latest`.
 on:
   push:
