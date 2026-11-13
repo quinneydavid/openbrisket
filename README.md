@@ -35,6 +35,8 @@ servers_final_v2.xls.
   answers the question.
 - **Backs itself up.** Point it at a private git repository of your own and every change is pushed there.
 - **Works with agents.** An MCP server and an agent skill let a chat agent plan, follow and close a cook.
+- **Exports metrics.** `/metrics` serves the cook to Prometheus, and the repository has a Grafana dashboard and
+  alert rules to go with it.
 
 OpenBrisket monitors and advises. The fan controller stays in charge of the fire.
 
@@ -64,8 +66,9 @@ OpenBrisket monitors and advises. The fan controller stays in charge of the fire
 | Production | The table |
 | Staging | There is none. Every cook is tested on guests |
 | SLO | Dinner at the stated time |
-| Error budget | The rest: 120 minutes ideal, 60 minimum. "Behind schedule" fires when the estimate starts spending it |
+| Error budget | The rest: 120 minutes ideal, 60 minimum. "Behind schedule" fires when the estimate starts spending it. Exported as `openbrisket_cook_error_budget_seconds` |
 | Monitoring | Pit, meat probes and fan, read every 15 seconds |
+| Observability | A `/metrics` endpoint, a Prometheus and a Grafana dashboard, for one piece of beef |
 | Paging | The notes. In the example plan below, the stall pages at 04:46 |
 | On-call | You |
 | Agents | They plan the cook, watch it, look at photos of the bark and write it up. They do not get out of bed at 4 am. See On-call |
@@ -224,16 +227,36 @@ using the terminal alone.
 - **API**: every endpoint with a Send button and the rights it needs. The same list is served as an OpenAPI 3 document at
   `/api/openapi.json`.
 - **Settings**: readings (including a name for each probe, so you know which physical probe is which),
-  Telegram, and the address and token for agents.
+  Telegram, backup, tokens, the metrics address for Prometheus, and the address and token for agents.
 
 The header has a light / dark / auto switch. The colours are GitHub's open-source Primer palette;
 OpenBrisket is not affiliated with GitHub.
 
-Everything under `/api` and `/mcp` needs a token. The main access token has full rights. On the Settings
+Everything under `/api`, `/mcp` and `/metrics` needs a token. The main access token has full rights. On the Settings
 page you can mint more with fewer: `read` (look and plan), `write` (also run a cook and save recipes) or
 `admin`. Give each agent or screen its own, and revoke it when it is no longer needed. The main token can be
 replaced there too. Put the page behind HTTPS (a reverse proxy) before reaching it from outside your home
 network; see [SECURITY.md](SECURITY.md).
+
+## Metrics and Grafana
+
+`/metrics` serves the cook in the Prometheus text format: pit, every probe, fan output, the phase, the status
+checks, the estimated finish, the hold, and the error budget in seconds. It needs a token with `read` rights;
+the Settings page mints one for Prometheus and prints the scrape job to paste.
+
+[monitoring/](monitoring/README.md) has a Grafana dashboard, a Prometheus config and alert rules
+(`FireDying`, `ErrorBudgetBurn`, `DinnerSLOBreach` and others). To run Prometheus and Grafana beside the app
+with the dashboard already loaded:
+
+```
+$ docker compose --profile monitoring up -d
+```
+
+![The Grafana dashboard for a brisket cook: temperatures with event markers, phase, status checks, fan, weather and the hold](docs/screenshots/grafana.png)
+
+The dashboard shows a made-up cook. The markers on the graphs are the cook's events: meat on, spritz, the
+stall, a hotfix, the wrap, the rest. None of this is needed to run a cook. The Cook page draws its own curve
+and the app sends its own notes.
 
 ## Agents
 

@@ -1,6 +1,6 @@
 """`openbrisket serve`: the web page, the JSON API and the MCP endpoint, plus the background runner.
 
-Everything under /api and /mcp needs the access token as `Authorization: Bearer <token>`. The page
+Everything under /api, /mcp and /metrics needs the access token as `Authorization: Bearer <token>`. The page
 itself is a static shell with no data in it; it asks for the token once and keeps it in the browser.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, apidoc, mcp
+from . import __version__, apidoc, mcp, metrics
 from .service import SCOPES, Service, ServiceError
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -128,12 +128,14 @@ def make_handler(service: Service):
                 with open(os.path.join(WEB_DIR, name), "rb") as f:
                     return self._send(200, f.read(), ctype, {
                         "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'"})
-            if not path.startswith("/api/"):
+            if path != "/metrics" and not path.startswith("/api/"):
                 return self._json({"error": "not found"}, 404)
             scope = self._allowed("GET", path)
             if scope is None:
                 return None
             try:
+                if path == "/metrics":
+                    return self._send(200, metrics.render(service).encode(), "text/plain; version=0.0.4; charset=utf-8")
                 if path == "/api/tokens":
                     return self._json(service.list_tokens())
                 if path == "/api/status":
@@ -165,6 +167,9 @@ def make_handler(service: Service):
                 return self._json({"error": "not found"}, 404)
             except ServiceError as e:
                 return self._json({"error": str(e)}, 400)
+            except Exception as e:   # a bug must not take the server down mid-cook
+                print(f"server: {path}: {e!r}", file=sys.stderr, flush=True)
+                return self._json({"error": "internal error; see the log"}, 500)
 
         def do_POST(self):
             path = self.path.split("?", 1)[0]

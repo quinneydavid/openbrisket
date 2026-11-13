@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.0
+
+- Prometheus metrics at `/metrics` (text format, a token with `read` rights is enough): pit, probes, fan,
+  weather, the phase, status checks, events, the estimated finish, the hold, and the time between the estimated
+  finish and serving as `openbrisket_cook_error_budget_seconds`. All names are listed in `monitoring/README.md`.
+- `monitoring/` has a Grafana dashboard (cook events are drawn as markers on the graphs), a Prometheus config and
+  alert rules: `PitFeedDown`, `PitDrift`, `FireDying`, `ErrorBudgetBurn`, `DinnerSLOBreach`, `CookCheckFailing`,
+  `HoldNearFloor`.
+- `docker compose --profile monitoring up -d` runs Prometheus and Grafana beside the app with the dashboard
+  loaded.
+- Settings has a Metrics section: the scrape address, a button that mints a read token for Prometheus and prints
+  the scrape job, and a check of the metrics page.
+
 ## 0.12.1
 
 - Fix: on a data volume whose top folder belongs to root (usual in Kubernetes and with some Docker volumes), git

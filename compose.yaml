@@ -3,6 +3,9 @@
 #
 #   docker compose up -d            pulls the published image
 #   docker compose up -d --build    builds it from this folder instead
+#
+# With graphs (Prometheus and Grafana beside it, dashboard already loaded; see monitoring/README.md):
+#   docker compose --profile monitoring up -d
 services:
   openbrisket:
     image: ghcr.io/quinneydavid/openbrisket:latest
@@ -12,5 +15,33 @@ services:
       - "8321:8321"
     volumes:
       - openbrisket-data:/data      # settings, your recipes and stacks, and your private cook log
+
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.16.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2y      # a cook is small; keep them to compare
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro      # prometheus.yml, alerts.yml and the token file
+      - prometheus-data:/prometheus
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:13.3.1
+    restart: unless-stopped
+    ports:
+      - "3000:3000"                 # first sign-in is admin / admin, and it asks for a new password
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
 volumes:
   openbrisket-data:
+  prometheus-data:
+  grafana-data:

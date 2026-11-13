@@ -979,6 +979,23 @@ async function renderSettings() {
           holder.querySelector(".body").append(h("div", { class: "msg ok", role: "status" }, h("div", {}, `Token "${out.name}" with ${out.scope} rights. Copy it now: it is not stored and cannot be shown again.`), h("pre", {}, out.token)));
         } catch (e) { holder.querySelector(".body").append(msg(e.message, "err")); }
       } }, "Mint token")))),
+    box("Metrics", h("div", { class: "body" },
+      h("p", { class: "sub" }, "The cook as Prometheus metrics: pit, probes, fan, phase, status checks, the estimate and the error budget. Any token with read rights can scrape it. The repository has a Grafana dashboard and alert rules for these names in monitoring/."),
+      h("dl", { class: "kv" }, h("dt", {}, "Scrape address"), h("dd", { class: "mono" }, location.origin + "/metrics")),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "primary", onclick: async (ev) => {
+        const holder = ev.target.closest(".box");
+        holder.querySelectorAll(".msg").forEach((m) => m.remove());
+        try {
+          const out = await api("/api/tokens", { name: "prometheus", scope: "read" });
+          const job = ["scrape_configs:", "  - job_name: openbrisket", "    scheme: " + location.protocol.replace(":", ""), "    metrics_path: /metrics", "    authorization:", "      credentials: " + out.token, "    static_configs:", "      - targets: [\"" + location.host + "\"]"].join("\n");
+          holder.querySelector(".body").append(h("div", { class: "msg ok", role: "status" }, h("div", {}, "A read token named “prometheus”. Copy it now: it is not stored and cannot be shown again. With the bundled Prometheus, save it as monitoring/prometheus/token."), h("pre", {}, out.token), h("div", {}, "For a Prometheus you already run:"), h("pre", {}, job)));
+        } catch (e) { holder.querySelector(".body").append(msg(e.message, "err")); }
+      } }, "Mint a token for Prometheus"),
+        h("button", { type: "button", onclick: (ev) => act(ev.target, async () => {
+          const res = await fetch("/metrics", { headers: { Authorization: "Bearer " + (token || "") } });
+          if (!res.ok) throw new Error("the metrics page answered " + res.status);
+          const lines = (await res.text()).split("\n").filter((l) => l && l[0] !== "#");
+          return `${lines.length} series are being served.`; }) }, "Check the metrics page")))),
     box("Agents", h("div", { class: "body" }, h("p", { class: "sub" }, "An agent can follow and run a cook through the MCP endpoint or the JSON API, with a token from above or the main access token."),
       h("dl", { class: "kv" }, h("dt", {}, "MCP endpoint"), h("dd", { class: "mono" }, location.origin + "/mcp"),
         h("dt", {}, "API"), h("dd", { class: "mono" }, location.origin + "/api/status"),

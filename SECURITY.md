@@ -2,7 +2,7 @@
 
 OpenBrisket is made to run at home, behind your own network.
 
-- Everything under `/api` and `/mcp` needs a token. The main access token has full rights; mint tokens with
+- Everything under `/api`, `/mcp` and `/metrics` needs a token. The main access token has full rights; mint tokens with
   fewer rights for agents and screens on the Settings page, and revoke them there.
 - The main access token can be replaced on the Settings page. Do that if it has ever been shown somewhere it
   should not have been.

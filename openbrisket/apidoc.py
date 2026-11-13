@@ -67,6 +67,7 @@ ENDPOINTS += [
       "wood": [{"species": "post oak", "form": "chunks", "pieces": 4, "when": "buried through the charcoal"}],
       "water_pan": "none", "airflow": {"controller": "fan", "deflector": True, "top_vent": "one finger open"},
       "change": "why it changed"}),
+    ("GET", "/metrics", "Agents", "The cook as Prometheus metrics (text format): pit, probes, fan, phase, checks, estimate, error budget.", None),
     ("GET", "/api/stacks/vocabulary", "Stacks", "The allowed kinds of smoker, fuel, wood form and air control.", None),
 ]
 PUBLIC = {"/healthz", "/api/openapi.json"}
@@ -90,7 +91,7 @@ def spec() -> dict:
     paths: dict = {}
     for method, path, group, summary, example in ENDPOINTS:
         op: dict = {"summary": summary, "tags": [group],
-                    "responses": {"200": {"description": "OK", "content": {"application/json": {}}},
+                    "responses": {"200": {"description": "OK", "content": {"text/plain" if path == "/metrics" else "application/json": {}}},
                                   "400": {"description": "Refused, with {\"error\": \"why\"}"}}}
         scope = required_scope(method, path)
         if scope:

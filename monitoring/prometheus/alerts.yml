@@ -1,0 +1,63 @@
+# Alert rules for a cook. OpenBrisket already sends its own notes (Telegram or the log), so these are for
+# people who run Alertmanager and want the pit on the same pager as everything else.
+groups:
+  - name: openbrisket
+    rules:
+      - alert: PitFeedDown
+        expr: openbrisket_feed_up == 0 and on() openbrisket_cook_open == 1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: No readings from the pit for five minutes while a cook is open.
+          description: Check the reader board, Home Assistant and the fan controller's Bluetooth.
+
+      - alert: PitDrift
+        expr: |
+          abs(openbrisket_pit_temperature_celsius - on() openbrisket_cook_pit_target_celsius)
+            > on() openbrisket_cook_pit_tolerance_celsius
+          and on() openbrisket_cook_meat_on_timestamp_seconds > 0
+          unless on() openbrisket_cook_phase{phase="resting"} == 1
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: The pit has been outside the range the recipe declares for 15 minutes (at {{ $value | printf "%.0f" }} C off target).
+
+      - alert: FireDying
+        expr: |
+          openbrisket_fan_output_percent >= 90
+          and on() openbrisket_pit_temperature_celsius
+            < on() (openbrisket_cook_pit_target_celsius - openbrisket_cook_pit_tolerance_celsius)
+          and on() openbrisket_cook_meat_on_timestamp_seconds > 0
+          unless on() openbrisket_cook_phase{phase="resting"} == 1
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: Outage. The fan has been flat out for ten minutes and the pit is still low. It wants a hotfix.
+
+      - alert: ErrorBudgetBurn
+        expr: openbrisket_cook_error_budget_seconds < 3600 and openbrisket_cook_error_budget_seconds >= 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: Less than an hour between the estimated finish and serving. The rest is being spent.
+
+      - alert: DinnerSLOBreach
+        expr: openbrisket_cook_error_budget_seconds < 0
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: The meat is expected off after the serving time. Dinner is going to be late.
+
+      - alert: CookCheckFailing
+        expr: openbrisket_cook_check_status == -1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: The {{ $labels.check }} check has been failing for ten minutes.
+
+      - alert: HoldNearFloor
+        expr: openbrisket_hold_until_floor_seconds < 3600
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: At this rate the held meat reaches its floor temperature within the hour.
