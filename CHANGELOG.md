@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.1
+
+- Fix: on a data volume whose top folder belongs to root (usual in Kubernetes and with some Docker volumes), git
+  refused the new single repository ("dubious ownership"), so recipes and cooks stayed in their old separate
+  repositories and backup was unavailable. Nothing was lost; the join now runs on the next start.
+
 ## 0.12.0
 
 - Backup to a git repository of your own, set on the Settings page (`POST /api/backup`, `POST /api/backup/now`).

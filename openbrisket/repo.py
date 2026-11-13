@@ -49,6 +49,12 @@ Every save and every cook event is a commit.
 """
 
 
+# git refuses a repository whose folder belongs to another user. A mounted data volume is often owned by root
+# while the app runs as an ordinary user, so tell git that the folders this app works in are trusted.
+if "GIT_CONFIG_COUNT" not in os.environ:
+    os.environ.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="safe.directory", GIT_CONFIG_VALUE_0="*")
+
+
 class RepoError(Exception):
     pass
 
@@ -205,12 +211,15 @@ def check_url(url: str) -> str:
 def _env(token: str | None) -> dict:
     """Environment for a git call over the network: never ask on a terminal, use no stored logins, and send the
     token as a header (kept out of the command line and out of the saved address)."""
-    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_CONFIG_COUNT="1",
-               GIT_CONFIG_KEY_0="credential.helper", GIT_CONFIG_VALUE_0="")
+    extra = [("credential.helper", "")]
     if token:
         basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-        env.update(GIT_CONFIG_COUNT="2", GIT_CONFIG_KEY_1="http.extraHeader",
-                   GIT_CONFIG_VALUE_1=f"Authorization: Basic {basic}")
+        extra.append(("http.extraHeader", f"Authorization: Basic {basic}"))
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+    n = int(env.get("GIT_CONFIG_COUNT") or 0)             # keep what is already set (safe.directory)
+    for i, (key, value) in enumerate(extra, start=n):
+        env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"] = key, value
+    env["GIT_CONFIG_COUNT"] = str(n + len(extra))
     return env
 
 
