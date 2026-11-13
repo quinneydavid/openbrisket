@@ -2,17 +2,18 @@
 
 ## 0.10.0
 
-- Pit setups as code. A setup is a third kind of file beside recipes and rubs (`kind: Setup`, in `setups/`): the
+- Stacks as code. A stack is a third kind of file beside recipes and rubs (`kind: Stack`, in `stacks/`): the
   smoker, the fuel with its amount and how it is laid and lit, the smoking wood, the water pan, the vents. Written
-  on the new Setups tab (form or Edit YAML), over the API (`/api/setups`) or by an agent (`list_setups`,
-  `save_setup`). Every save is a commit and a changed setup gets the next version, with the same field-by-field
+  on the new Stacks tab (form or Edit YAML), over the API (`/api/stacks`) or by an agent (`list_stacks`,
+  `save_stack`). Every save is a commit and a changed stack gets the next version, with the same field-by-field
   History as recipes.
-- A cook is opened with a setup (the last one used is offered) and keeps a copy of it. The plan's "light the fire"
-  step says what to load and light. Finished cooks are listed per setup version with the score, how much the pit
-  varied and fuel burnt per hour.
-- Two more steps to log during a cook: `fuel` and `wood` (more was added). Closing a cook takes the fuel burnt.
-- `plan` and `apply` take `--setup FILE`; `close` takes `--fuel-used`. `validate` checks setups too.
-- Two built-in setups to start from: kamado on lump with oak, kettle with a briquette snake and hickory.
+- A cook is opened with a stack (the last one used is offered) and keeps a copy of it. The plan's "light the fire"
+  step says what to load and light. Finished cooks are listed per stack version with the score, how much the pit
+  varied, the burn rate and the number of hotfixes.
+- Two more steps to log during a cook: `hotfix` (fuel added) and `wood`. Closing a cook takes the fuel burnt and
+  works out the burn rate in kg an hour.
+- `plan` and `apply` take `--stack FILE`; `close` takes `--fuel-used`. `validate` checks stacks too.
+- Two built-in stacks to start from: kamado on lump with oak, kettle with a briquette snake and hickory.
 
 ## 0.9.0
 

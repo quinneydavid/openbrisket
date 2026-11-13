@@ -586,7 +586,7 @@ class HttpTests(Base):
         def mcp_call(token, method, params=None):
             return self.req("/mcp", {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}, token=token)[1]
         names = [t["name"] for t in mcp_call(read, "tools/list")["result"]["tools"]]
-        self.assertEqual(sorted(names), ["cook_history", "cook_status", "list_recipes", "list_rubs", "list_setups",
+        self.assertEqual(sorted(names), ["cook_history", "cook_status", "list_recipes", "list_rubs", "list_stacks",
                                          "plan_cook", "recipe_history"])
         self.assertEqual(len(mcp_call(write, "tools/list")["result"]["tools"]), 16)
         refused = mcp_call(read, "tools/call", {"name": "log_step", "arguments": {"step": "wrap"}})["result"]

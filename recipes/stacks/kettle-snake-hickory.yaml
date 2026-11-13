@@ -1,5 +1,5 @@
 apiVersion: openbrisket/v1
-kind: Setup
+kind: Stack
 name: kettle-snake-hickory
 version: 1.0.0
 description: Kettle grill with a briquette snake and hickory, run by hand on the vents. Good for ribs and pork shoulder.

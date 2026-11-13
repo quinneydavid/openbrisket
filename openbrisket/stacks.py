@@ -1,11 +1,11 @@
-"""Pit setups as code: what the fire was built from.
+"""Stacks as code: what the fire was built from.
 
-A setup is a YAML file that says what you cook on and how you run it: the smoker, the fuel and how it is laid
-and lit, the smoking wood, the water pan, the vents. A cook is opened with a setup, the cook keeps a copy of it,
-and results are listed per setup version, so "did the bigger chunks help" has an answer.
+A stack is a YAML file that says what you cook on and how you run it: the smoker, the fuel and how it is laid
+and lit, the smoking wood, the water pan, the vents. A cook is opened with a stack, the cook keeps a copy of it,
+and results are listed per stack version, so "did the bigger chunks help" has an answer.
 
     apiVersion: openbrisket/v1
-    kind: Setup
+    kind: Stack
     name: kamado-lump-oak
     version: 1.0.0
     smoker:  {type: kamado, model: ...}
@@ -38,15 +38,15 @@ def _texts(d: dict, keys: tuple, where: str, p: list[str]) -> None:
             p.append(f"{where}.{key} must be text")
 
 
-def validate_setup(doc: dict) -> list[str]:
-    """Return every problem found in a parsed setup document."""
+def validate_stack(doc: dict) -> list[str]:
+    """Return every problem found in a parsed stack document."""
     p: list[str] = []
     if not isinstance(doc, dict):
-        return ["setup is not a mapping"]
+        return ["stack is not a mapping"]
     if doc.get("apiVersion") != API_VERSION:
         p.append(f"apiVersion must be {API_VERSION}")
-    if doc.get("kind") != "Setup":
-        p.append("kind must be Setup")
+    if doc.get("kind") != "Stack":
+        p.append("kind must be Stack")
     if not isinstance(doc.get("name"), str) or not doc.get("name"):
         p.append("name is missing")
     if "version" in doc and not isinstance(doc["version"], (str, int, float)):
@@ -151,9 +151,9 @@ def fire_line(doc: dict) -> str:
     return ". ".join(x for x in parts if x)
 
 
-def snapshot(doc: dict, setup_id: str) -> dict:
-    """The copy of a setup a cook keeps, so the cook still knows it after the setup changes."""
-    out = {"id": setup_id, "name": doc.get("name"), "version": str(doc.get("version", "1.0.0"))}
+def snapshot(doc: dict, stack_id: str) -> dict:
+    """The copy of a stack a cook keeps, so the cook still knows it after the stack changes."""
+    out = {"id": stack_id, "name": doc.get("name"), "version": str(doc.get("version", "1.0.0"))}
     for key in ("smoker", "fuel", "wood", "water_pan", "airflow", "notes"):
         if key in doc:
             out[key] = doc[key]

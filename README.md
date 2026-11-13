@@ -1,6 +1,6 @@
 # OpenBrisket
 
-BBQ as Code. Recipes, rubs and pit setups are files in git, every cook is a log of commits, and you get a note whenever the
+BBQ as Code. Recipes, rubs and stacks are files in git, every cook is a log of commits, and you get a note whenever the
 meat needs you. We call the method PitOps.
 
 Smoking meat means changing things: how long it cooks, when it comes off, what goes in the rub. OpenBrisket keeps
@@ -17,7 +17,9 @@ are running late for dinner. It does not control the fire. Your fan controller k
 |---|---|
 | Declarative config | A recipe is a YAML file: cut, rub, pit temperature, wrap point, target, rest |
 | Modules | Rubs are files that recipes reference |
-| Environment | A pit setup is a YAML file: smoker, fuel, wood, water pan, vents. The same recipe runs on any of them |
+| Stack | The smoker, fuel, wood, water pan and vents, as a YAML file. Yes, a smoke stack. The same recipe runs on any of them |
+| Hotfix | Adding fuel in the middle of a cook |
+| Burn rate | Kilograms of fuel an hour |
 | `plan` | The whole timeline, worked back from the serving time, before anything is lit |
 | `apply` | Opens the cook |
 | Smoke test | The check before the meat goes on. Also the CI job that validates recipes |
@@ -103,8 +105,8 @@ using the terminal alone.
   produced, a History that shows exactly what changed between versions and why, and forms to write your own. What you
   save is a YAML file in your own library (`recipes/` in the data folder, a git repository), with a commit for
   every change. The built-in ones are read-only; "Customise" makes your copy.
-- **Setups**: what the fire is built from, as files with the same history as recipes, and what each version of a
-  setup produced. See [Pit setups](#pit-setups).
+- **Stacks**: what the fire is built from, as files with the same history as recipes, and what each version of a
+  stack produced. See [Stacks](#stacks).
 - **History**: a year of cooks at a glance, and each past cook with its curve, events and score.
 - **API**: every endpoint with a Send button and the rights it needs. The same list is served as an OpenAPI 3 document at
   `/api/openapi.json`.
@@ -166,14 +168,14 @@ The style only sets defaults. A recipe can also have timed `stages` (ribs 3-2-1)
 crisp, a glaze), and a pull temperature for meat that carries over while it rests. See the files in
 [recipes/](recipes/) for one of each. Cold smoking is not covered.
 
-## Pit setups
+## Stacks
 
-The recipe says what the meat needs. The setup says what you cook it on and what you burn, which is where most of
+The recipe says what the meat needs. The stack says what you cook it on and what you burn, which is where most of
 the variables are:
 
 ```yaml
 apiVersion: openbrisket/v1
-kind: Setup
+kind: Stack
 name: kamado-lump-oak
 version: 1.0.0
 smoker:
@@ -193,12 +195,12 @@ airflow:
   top_vent: one finger open
 ```
 
-Pick a setup when you open a cook (`--setup` in the terminal). The cook keeps a copy, the plan tells you what to
-load and light, and during the cook you log `fuel` and `wood` whenever you add more. When the cook is closed it
-is listed under the version of the setup it ran on, with its score, how much the pit varied and the fuel burnt
-per hour. Change one thing at a time, say why in the commit message, and the table tells you what the change did.
+Pick a stack when you open a cook (`--stack` in the terminal). The cook keeps a copy, the plan tells you what to
+load and light, and during the cook you log a `hotfix` (more fuel) or `wood` whenever you add some. When the cook is closed it
+is listed under the version of the stack it ran on, with its score, how much the pit varied, its burn rate
+and how many hotfixes it needed. Change one thing at a time, say why in the commit message, and the table tells you what the change did.
 
-Recipes do not name a setup, so a shared recipe works on anybody's smoker.
+Recipes do not name a stack, so a shared recipe works on anybody's smoker.
 
 ## Photo checks
 

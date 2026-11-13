@@ -49,7 +49,7 @@ DONE_LABEL = {"feel": "probe tender (expected)", "temperature": "at temperature 
 
 
 def make_plan(recipe: Recipe, weight_kg: float | None, serve_at: datetime, fire: str | None = None) -> Plan:
-    """`fire` is one line from the pit setup (fuel, wood, water pan), shown on the light-the-fire step."""
+    """`fire` is one line from the stack (fuel, wood, water pan), shown on the light-the-fire step."""
     hours = recipe.cook_hours(weight_kg)
     params = prior_params(recipe, weight_kg)
     by_temp = not recipe.timed and recipe.off_c is not None

@@ -202,7 +202,7 @@ class Engine:
             self.state["rest_at"] = _iso(now)
             msg = f"off the pit, resting (minimum {r.rest_min_minutes} min, ideal {r.rest_ideal_minutes} min)"
         else:
-            msg = {"fuel": "fuel added", "wood": "wood added"}.get(kind, kind)
+            msg = {"hotfix": "hotfix, fuel added", "wood": "wood added"}.get(kind, kind)
         if note:
             msg += f": {note}"
         self.store.add_event(self.cook_id, now, kind, msg)

@@ -1,5 +1,5 @@
 apiVersion: openbrisket/v1
-kind: Setup
+kind: Stack
 name: kamado-lump-oak
 version: 1.0.0
 description: Ceramic kamado on lump charcoal with oak chunks and a fan controller. A long, steady overnight fire.

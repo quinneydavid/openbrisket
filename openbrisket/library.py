@@ -1,9 +1,9 @@
-"""Your own recipes, rubs and pit setups: YAML files in a git repository, written from the page, the API or an
+"""Your own recipes, rubs and stacks: YAML files in a git repository, written from the page, the API or an
 agent.
 
     <data folder>/recipes/            your recipes, one file each
     <data folder>/recipes/rubs/       your rubs
-    <data folder>/recipes/setups/     your pit setups (smoker, fuel, wood, vents)
+    <data folder>/recipes/stacks/     your stacks (smoker, fuel, wood, vents)
 
 Every save is a commit, so a recipe has a history and any version can be brought back with git.
 The recipes shipped with the app are read-only; saving one under the same name makes your own copy,
@@ -17,11 +17,11 @@ import subprocess
 
 import yaml
 
-from . import recipes, setups
+from . import recipes, stacks
 
 GIT_ID = ["-c", "user.name=OpenBrisket", "-c", "user.email=openbrisket@localhost"]
-SUBDIR = {"recipe": "", "rub": "rubs", "setup": "setups"}      # where each kind of file lives in the library
-KIND = {"recipe": "Recipe", "rub": "Rub", "setup": "Setup"}
+SUBDIR = {"recipe": "", "rub": "rubs", "stack": "stacks"}      # where each kind of file lives in the library
+KIND = {"recipe": "Recipe", "rub": "Rub", "stack": "Stack"}
 
 
 class LibraryError(Exception):
@@ -225,14 +225,14 @@ def _text(d: dict, key: str) -> str:
     return str(d.get(key) or "").strip()
 
 
-def setup_doc(form: dict) -> dict:
-    """Turn a setup form into a setup document (not yet validated). The form has the shape of the file:
+def stack_doc(form: dict) -> dict:
+    """Turn a stack form into a stack document (not yet validated). The form has the shape of the file:
     smoker, fuel, wood, water_pan, airflow, notes."""
     name = slug(form.get("name") or "")
     if not name:
-        raise LibraryError("the setup needs a name")
+        raise LibraryError("the stack needs a name")
     part = lambda key: form.get(key) if isinstance(form.get(key), dict) else {}  # noqa: E731
-    doc: dict = {"apiVersion": recipes.API_VERSION, "kind": "Setup", "name": name,
+    doc: dict = {"apiVersion": recipes.API_VERSION, "kind": "Stack", "name": name,
                  "version": str(form.get("version") or "").strip()}
     if _text(form, "description"):
         doc["description"] = _text(form, "description")
@@ -285,11 +285,11 @@ def setup_doc(form: dict) -> dict:
     return doc
 
 
-def save_setup(root: str, form: dict) -> dict:
-    doc = setup_doc(form)
+def save_stack(root: str, form: dict) -> dict:
+    doc = stack_doc(form)
     ensure(root)
-    os.makedirs(os.path.join(root, "setups"), mode=0o700, exist_ok=True)
-    path = os.path.join(root, "setups", doc["name"] + ".yaml")
+    os.makedirs(os.path.join(root, "stacks"), mode=0o700, exist_ok=True)
+    path = os.path.join(root, "stacks", doc["name"] + ".yaml")
     old = _existing(path)
     if not doc["version"]:               # no version given: carry on from the saved one
         doc["version"] = str(old.get("version", "1.0.0")) if old is not None else "1.0.0"
@@ -298,14 +298,14 @@ def save_setup(root: str, form: dict) -> dict:
         if body(old) == body(doc) and str(old.get("version", "1.0.0")) == doc["version"]:
             return {"id": doc["name"], "version": doc["version"], "saved": False, "message": "no change"}
         if body(old) != body(doc) and str(old.get("version", "1.0.0")) == doc["version"]:
-            doc["version"] = bump(doc["version"])     # a changed setup never keeps its old version number
-    problems = setups.validate_setup(doc)
+            doc["version"] = bump(doc["version"])     # a changed stack never keeps its old version number
+    problems = stacks.validate_stack(doc)
     if problems:
         raise LibraryError("; ".join(problems))
     with open(path, "w", encoding="utf-8") as f:
         f.write(_dump(doc))
     summary = str(form.get("change") or "").strip()
-    _commit(root, f"setup {doc['name']} {doc['version']}: " + (summary or ("add" if old is None else "update")))
+    _commit(root, f"stack {doc['name']} {doc['version']}: " + (summary or ("add" if old is None else "update")))
     return {"id": doc["name"], "version": doc["version"], "saved": True,
             "message": "added" if old is None else f"updated to {doc['version']}"}
 
@@ -335,7 +335,7 @@ def save_recipe(root: str, form: dict, rub_dirs: list[str]) -> dict:
 
 
 def save_yaml(root: str, kind: str, text: str, rub_dirs: list[str], change: str = "") -> dict:
-    """Save a recipe, rub or pit setup from YAML text. The text is written as typed, so comments survive; only the version
+    """Save a recipe, rub or stack from YAML text. The text is written as typed, so comments survive; only the version
     line is touched, and only when the content changed without the version being moved on."""
     try:
         doc = yaml.safe_load(text)
@@ -367,7 +367,7 @@ def save_yaml(root: str, kind: str, text: str, rub_dirs: list[str], change: str 
             else:                                   # no version line to move on: add one after the name
                 text = re.sub(r"^(name:.*)$", lambda m: f"{m.group(1)}\nversion: {new_version}", text, count=1, flags=re.M)
             doc["version"], version = new_version, new_version
-    problems = (recipes.validate_rub(doc) if kind == "rub" else setups.validate_setup(doc) if kind == "setup"
+    problems = (recipes.validate_rub(doc) if kind == "rub" else stacks.validate_stack(doc) if kind == "stack"
                 else recipes.validate_recipe(doc, root, rub_dirs))
     if problems:
         raise LibraryError("; ".join(problems))
@@ -427,7 +427,7 @@ def _flat(doc: dict | None) -> dict[str, str]:
             for item in value:
                 if isinstance(item, dict) and item.get("species"):
                     species = item["species"]
-                    out[f"ingredient:wood, {species}"] = setups.wood_text(item).replace(f"{species} ", "", 1)
+                    out[f"ingredient:wood, {species}"] = stacks.wood_text(item).replace(f"{species} ", "", 1)
         elif key == "ingredients" and isinstance(value, list):
             for item in value:
                 if isinstance(item, dict) and item.get("name"):
@@ -454,7 +454,7 @@ def _changes(before: dict | None, after: dict | None) -> list[dict]:
 
 
 def history(root: str, kind: str, item_id: str, limit: int = 50) -> list[dict]:
-    """Every saved version of a recipe, rub or setup, newest first, each with what changed from the one before."""
+    """Every saved version of a recipe, rub or stack, newest first, each with what changed from the one before."""
     rel = os.path.join(SUBDIR[kind], slug(item_id) + ".yaml")
     if not os.path.isdir(os.path.join(root, ".git")):
         return []

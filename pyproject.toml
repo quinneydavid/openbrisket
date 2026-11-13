@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "openbrisket"
 version = "0.10.0"
-description = "BBQ as Code: recipes, rubs and pit setups in git, a cook log with history, and notes when the meat needs you."
+description = "BBQ as Code: recipes, rubs and stacks in git, a cook log with history, and notes when the meat needs you."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "David Quinney"}]

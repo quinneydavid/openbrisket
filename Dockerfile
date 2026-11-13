@@ -1,6 +1,6 @@
 FROM python:3.13-slim
 LABEL org.opencontainers.image.title="openbrisket" \
-      org.opencontainers.image.description="BBQ as Code: recipes, rubs and pit setups in git, a cook log with history, and notes when the meat needs you" \
+      org.opencontainers.image.description="BBQ as Code: recipes, rubs and stacks in git, a cook log with history, and notes when the meat needs you" \
       org.opencontainers.image.source="https://github.com/quinneydavid/openbrisket" \
       org.opencontainers.image.licenses="MIT"
 # git keeps the cook log; PyYAML is the only Python dependency.

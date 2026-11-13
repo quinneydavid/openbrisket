@@ -111,10 +111,10 @@ def make_handler(service: Service):
                     return self._json(service.list_recipes())
                 if path == "/api/rubs":
                     return self._json(service.list_rubs())
-                if path == "/api/setups":
-                    return self._json(service.list_setups())
-                if path == "/api/setups/vocabulary":
-                    return self._json(service.setup_vocabulary())
+                if path == "/api/stacks":
+                    return self._json(service.list_stacks())
+                if path == "/api/stacks/vocabulary":
+                    return self._json(service.stack_vocabulary())
                 if path.startswith("/api/history/"):
                     kind, _, item = path[len("/api/history/"):].partition("/")
                     return self._json(service.item_history(kind, item))
@@ -153,8 +153,8 @@ def make_handler(service: Service):
                     return self._json(service.save_recipe(body))
                 if path == "/api/rubs":
                     return self._json(service.save_rub(body))
-                if path == "/api/setups":
-                    return self._json(service.save_setup(body))
+                if path == "/api/stacks":
+                    return self._json(service.save_stack(body))
                 if path == "/api/yaml":
                     return self._json(service.save_yaml(body.get("kind", ""), body.get("yaml", ""), body.get("change", "")))
                 if path == "/api/tokens":
@@ -165,11 +165,11 @@ def make_handler(service: Service):
                     return self._json(service.delete_item(body.get("kind", ""), body.get("id", "")))
                 if path == "/api/plan":
                     return self._json(service.plan(body.get("recipe"), body.get("weight_kg"), body.get("serve_at"),
-                                                   body.get("setup")))
+                                                   body.get("stack")))
                 if path == "/api/cooks":
                     return self._json(service.start(body.get("recipe"), body.get("weight_kg"), body.get("serve_at"),
                                                     body.get("probes") or body.get("probe"), body.get("probe_labels"),
-                                                    body.get("setup")))
+                                                    body.get("stack")))
                 if path == "/api/log":
                     return self._json(service.log_step(body.get("step", ""), body.get("note", "")))
                 if path == "/api/probe":

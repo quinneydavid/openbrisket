@@ -32,14 +32,14 @@ ob() { curl -sS -H "Authorization: Bearer $OPENBRISKET_TOKEN" -H "Content-Type: 
 | What | Call |
 |---|---|
 | Where the cook stands | `ob /api/status` |
-| Recipes, rubs, pit setups | `ob /api/recipes`, `ob /api/rubs`, `ob /api/setups` |
-| Save a pit setup | `ob /api/setups '{"name":"kamado-lump-oak","smoker":{"type":"kamado"},"fuel":{"type":"lump-charcoal","amount_kg":4,"layout":"full basket, lit on top"},"wood":[{"species":"post oak","form":"chunks","pieces":4}],"change":"why it changed"}'` |
+| Recipes, rubs, stacks | `ob /api/recipes`, `ob /api/rubs`, `ob /api/stacks` |
+| Save a stack | `ob /api/stacks '{"name":"kamado-lump-oak","smoker":{"type":"kamado"},"fuel":{"type":"lump-charcoal","amount_kg":4,"layout":"full basket, lit on top"},"wood":[{"species":"post oak","form":"chunks","pieces":4}],"change":"why it changed"}'` |
 | Save a rub | `ob /api/rubs '{"name":"coffee-chilli","ingredients":[{"name":"ground coffee","parts":2},{"name":"kosher salt","parts":2,"kind":"salt"},{"name":"brown sugar","parts":3,"kind":"sugar"}]}'` |
 | Save a recipe | `ob /api/recipes '{"name":"beef-short-ribs","cut":"beef-short-ribs","rub":"coffee-chilli","pit_target_c":135,"meat_target_c":96,"hours_fixed":8,"wrap_at_c":77,"change":"why it changed"}'` |
 | Plan without starting | `ob /api/plan '{"recipe":"texas-brisket","weight_kg":5.4,"serve_at":"2026-11-14 18:00"}'` |
-| Open a cook | `ob /api/cooks '{"recipe":"texas-brisket","weight_kg":5.4,"serve_at":"2026-11-14 18:00","probes":[1,2],"probe_labels":{"1":"flat","2":"point"},"setup":"kamado-lump-oak"}'` |
+| Open a cook | `ob /api/cooks '{"recipe":"texas-brisket","weight_kg":5.4,"serve_at":"2026-11-14 18:00","probes":[1,2],"probe_labels":{"1":"flat","2":"point"},"stack":"kamado-lump-oak"}'` |
 | Smoke test | `ob /api/smoke-test '{}'` |
-| Log a step | `ob /api/log '{"step":"meat-on"}'` (steps: `meat-on`, `wrap`, `spritz`, `fuel`, `wood`, `rest`, `note`) |
+| Log a step | `ob /api/log '{"step":"meat-on"}'` (steps: `meat-on`, `wrap`, `spritz`, `hotfix`, `wood`, `rest`, `note`) |
 | Store a photo check | `ob /api/check '{"check":"bark","data":{"colour":"mahogany","set":"firm","coverage_pct":90},"verdict":"wrap","by":"<your model>"}'` |
 | Check vocabulary | `ob /api/checks` |
 | Close | `ob /api/close '{"score":8.5,"cooked_weight_kg":3.1,"fuel_used_kg":3.5,"notes":"flat a little dry"}'` |
@@ -88,22 +88,22 @@ YAML files with a commit per save.
 - Pass on any warning in the reply, such as a sugary rub on a hot pit.
 - A save that breaks the food-safety floor is refused. Do not work around it.
 
-## Pit setups
+## Stacks
 
-A setup is what the fire is built from: smoker, fuel (kind, brand, kg, how it is laid and lit), smoking wood,
-water pan, vents. It is a file with versions, like a recipe (`list_setups`, `save_setup`).
+A stack is what the fire is built from: smoker, fuel (kind, brand, kg, how it is laid and lit), smoking wood,
+water pan, vents. It is a file with versions, like a recipe (`list_stacks`, `save_stack`).
 
-- When opening a cook, pass `setup`. If the cook does not name one, use the one marked `last_used` and say which
+- When opening a cook, pass `stack`. If the cook does not name one, use the one marked `last_used` and say which
   it is; ask only if anything is different today (other charcoal, other wood). If something is different, save
-  the setup with that change first, with the reason in `change`, then open the cook.
-- When the cook says they added charcoal or wood, log it: `log_step` with step `fuel` or `wood` and how much in
+  the stack with that change first, with the reason in `change`, then open the cook.
+- When the cook says they added charcoal or wood, log it: `log_step` with step `hotfix` (fuel) or `wood` and how much in
   the note.
 - At the end ask roughly how much fuel was burnt and pass it as `fuel_used_kg` to `close_cook`. Skip it if they
   do not know.
-- Before suggesting a change to the fire, read the setup's `results`: finished cooks per setup version with
-  score, how much the pit varied (`avg_pit_stdev_c`) and fuel per hour. `recipe_history` with kind `setup` says
+- Before suggesting a change to the fire, read the stack's `results`: finished cooks per stack version with
+  score, how much the pit varied (`avg_pit_stdev_c`) the burn rate (`avg_burn_rate_kg_h`, kg of fuel an hour) and `hotfixes`. `recipe_history` with kind `stack` says
   what changed between versions and why. Suggest one change at a time.
-- When changing a setup, pass every field again and put the reason in `change`.
+- When changing a stack, pass every field again and put the reason in `change`.
 
 ## Photos
 
