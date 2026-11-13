@@ -48,7 +48,8 @@ DONE_LABEL = {"feel": "probe tender (expected)", "temperature": "at temperature 
               "bend": "bend test", "time": "time is up"}
 
 
-def make_plan(recipe: Recipe, weight_kg: float | None, serve_at: datetime) -> Plan:
+def make_plan(recipe: Recipe, weight_kg: float | None, serve_at: datetime, fire: str | None = None) -> Plan:
+    """`fire` is one line from the pit setup (fuel, wood, water pan), shown on the light-the-fire step."""
     hours = recipe.cook_hours(weight_kg)
     params = prior_params(recipe, weight_kg)
     by_temp = not recipe.timed and recipe.off_c is not None
@@ -70,7 +71,8 @@ def make_plan(recipe: Recipe, weight_kg: float | None, serve_at: datetime) -> Pl
         steps.append(Step(meat_on - timedelta(minutes=recipe.fridge_out_min), "out of the fridge",
                           f"trim, apply the rub ({recipe.rub})" if recipe.rub else "trim and pat dry"))
     steps.append(Step(meat_on - timedelta(minutes=PREHEAT_MIN), "light the fire",
-                      f"bring the pit to {recipe.pit_target_c:g} C, then run the smoke test"))
+                      (f"{fire}. " if fire else "")
+                      + f"{'B' if fire else 'b'}ring the pit to {recipe.pit_target_c:g} C, then run the smoke test"))
     steps.append(Step(meat_on, "meat on", "smoke test passed" + (", probes in" if recipe.probe != "none" else "")))
     if recipe.stall_enabled and proj.stall_start_h is not None:
         steps.append(Step(meat_on + timedelta(hours=proj.stall_start_h), "stall expected",

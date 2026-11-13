@@ -7,7 +7,9 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from . import __version__, notify, plan as planmod, recipes, settings, smoketest, sources
+import yaml
+
+from . import __version__, notify, plan as planmod, recipes, settings, setups, smoketest, sources
 from .cook import Engine
 from .store import Store, StoreError
 
@@ -31,6 +33,18 @@ def _active(store: Store) -> str:
     if not cook_id:
         sys.exit("no cook is open. Start one with: openbrisket apply <recipe> --serve '<date time>'")
     return cook_id
+
+
+def _setup(path: str | None) -> dict | None:
+    """A pit setup file given with --setup, checked."""
+    if not path:
+        return None
+    with open(path, encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+    problems = setups.validate_setup(doc)
+    if problems:
+        raise recipes.RecipeError(f"{path}: " + "; ".join(problems))
+    return doc
 
 
 def _engine(cfg: dict, store: Store, cook_id: str, notifier=None) -> Engine:
@@ -58,7 +72,9 @@ def cmd_validate(args) -> int:
 
 def cmd_plan(args) -> int:
     recipe = recipes.load_recipe(args.recipe)
-    print(planmod.render(planmod.make_plan(recipe, args.weight, _when(args.serve))))
+    setup = _setup(args.setup)
+    print(planmod.render(planmod.make_plan(recipe, args.weight, _when(args.serve),
+                                           setups.fire_line(setup) if setup else None)))
     return 0
 
 
@@ -66,7 +82,8 @@ def cmd_apply(args) -> int:
     cfg = settings.load()
     recipe = recipes.load_recipe(args.recipe)
     serve = _when(args.serve)
-    the_plan = planmod.make_plan(recipe, args.weight, serve)
+    setup = _setup(args.setup)
+    the_plan = planmod.make_plan(recipe, args.weight, serve, setups.fire_line(setup) if setup else None)
     store = _store(cfg)
     meta = {
         "recipe_name": recipe.name, "recipe_version": recipe.version, "recipe_path": recipe.path,
@@ -75,6 +92,8 @@ def cmd_apply(args) -> int:
         "plan": [{"at": s.at.isoformat(timespec="minutes"), "step": s.what} for s in the_plan.steps],
         "recipe": recipe.raw,
     }
+    if setup:
+        meta["setup"] = setups.snapshot(setup, os.path.splitext(os.path.basename(args.setup))[0])
     try:
         cook_id = store.open_cook(recipe.name, _now().astimezone(), meta)
     except StoreError as e:
@@ -180,6 +199,8 @@ def cmd_close(args) -> int:
         raw = store.meta(cook_id).get("weight_kg")
         if raw:
             result["yield"] = round(args.cooked_weight / raw, 3)
+    if args.fuel_used is not None:
+        result["fuel_used_kg"] = args.fuel_used
     if args.notes:
         result["notes"] = args.notes
     status = "abandoned" if args.abandon else "done"
@@ -201,7 +222,7 @@ def main(argv=None) -> int:
 
     sub.add_parser("init", help="create the settings file").set_defaults(fn=cmd_init)
 
-    p = sub.add_parser("validate", help="check every recipe and rub under a folder (the CI smoke test)")
+    p = sub.add_parser("validate", help="check every recipe, rub and pit setup under a folder (the CI smoke test)")
     p.add_argument("path", nargs="?", default="recipes")
     p.set_defaults(fn=cmd_validate)
 
@@ -211,6 +232,7 @@ def main(argv=None) -> int:
         p.add_argument("recipe")
         p.add_argument("--weight", type=float, help="raw weight in kg")
         p.add_argument("--serve", required=True, help="serving time, e.g. '2026-11-14 18:00'")
+        p.add_argument("--setup", metavar="FILE", help="pit setup file: smoker, fuel, wood (recipes/setups/...)")
         if name == "apply":
             p.add_argument("--probe", default="1", help="food probes in the meat, e.g. 1 or 1,2,3 (default 1)")
         p.set_defaults(fn=fn)
@@ -223,7 +245,7 @@ def main(argv=None) -> int:
     sub.add_parser("smoke-test", help="pre-cook check: feed, pit stable, fan, probes, notes").set_defaults(
         fn=cmd_smoke_test)
 
-    p = sub.add_parser("log", help="record a step you did: meat-on, wrap, spritz, rest, note")
+    p = sub.add_parser("log", help="record a step you did: meat-on, wrap, spritz, fuel, wood, rest, note")
     p.add_argument("kind")
     p.add_argument("note", nargs="*")
     p.set_defaults(fn=cmd_log)
@@ -238,6 +260,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("close", help="merge the cook: record the result and close it")
     p.add_argument("--score", type=float, help="0 to 10")
     p.add_argument("--cooked-weight", type=float, help="weight after cooking, kg")
+    p.add_argument("--fuel-used", type=float, help="fuel burnt over the whole cook, kg")
     p.add_argument("--notes")
     p.add_argument("--abandon", action="store_true", help="close without merging (a cook that went wrong)")
     p.set_defaults(fn=cmd_close)
@@ -250,7 +273,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     try:
         return args.fn(args)
-    except (recipes.RecipeError, StoreError, sources.SourceError) as e:
+    except (recipes.RecipeError, StoreError, sources.SourceError, OSError, yaml.YAMLError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 

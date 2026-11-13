@@ -12,9 +12,9 @@ ENDPOINTS = [
      {"recipe": "texas-brisket", "weight_kg": 5.4, "serve_at": "2026-11-14 18:00"}),
     ("POST", "/api/cooks", "Cook", "Open a cook from a recipe. Only one cook can be open at a time.",
      {"recipe": "texas-brisket", "weight_kg": 5.4, "serve_at": "2026-11-14 18:00", "probes": [1, 2],
-      "probe_labels": {"1": "flat", "2": "point"}}),
+      "probe_labels": {"1": "flat", "2": "point"}, "setup": "kamado-lump-oak"}),
     ("POST", "/api/smoke-test", "Cook", "Run the pre-cook check: feed, pit steady, fan, probes, smoke, notes.", {}),
-    ("POST", "/api/log", "Cook", "Record a step done by hand: meat-on, wrap, spritz, rest, note.",
+    ("POST", "/api/log", "Cook", "Record a step done by hand: meat-on, wrap, spritz, fuel, wood, rest, note.",
      {"step": "note", "note": "added two chunks of post oak"}),
     ("POST", "/api/probe", "Cook", "Say a probe has been pulled out of the meat, or put back.",
      {"probe": 2, "in_meat": False}),
@@ -22,7 +22,7 @@ ENDPOINTS = [
      {"check": "bark", "data": {"colour": "mahogany", "set": "firm", "coverage_pct": 90}, "verdict": "wrap"}),
     ("GET", "/api/checks", "Cook", "The vocabulary for photo checks: kinds, fields, allowed values, verdicts.", None),
     ("POST", "/api/close", "Cook", "Close the open cook with its result, or abandon it.",
-     {"score": 8.5, "cooked_weight_kg": 3.1, "notes": "flat a little dry"}),
+     {"score": 8.5, "cooked_weight_kg": 3.1, "fuel_used_kg": 3.5, "notes": "flat a little dry"}),
     ("GET", "/api/cooks", "History", "Every cook, newest first, with its result.", None),
     ("GET", "/api/cooks/{id}", "History", "One cook: its record, analysis, events and temperature curve.", None),
     ("GET", "/api/recipes", "Recipes", "Every recipe with its numbers, rub, warnings, source and results per version.", None),
@@ -34,8 +34,8 @@ ENDPOINTS = [
     ("POST", "/api/rubs", "Recipes", "Add or change one of your own rubs.",
      {"name": "coffee-chilli", "ingredients": [{"name": "ground coffee", "parts": 2},
                                                {"name": "kosher salt", "parts": 2, "kind": "salt"}]}),
-    ("GET", "/api/history/{kind}/{id}", "Recipes", "Every saved version of a recipe or rub with what changed. kind is recipe or rub.", None),
-    ("POST", "/api/delete", "Recipes", "Delete one of your own recipes or rubs (it stays in the file history).",
+    ("GET", "/api/history/{kind}/{id}", "Recipes", "Every saved version of a recipe, rub or setup with what changed. kind is recipe, rub or setup.", None),
+    ("POST", "/api/delete", "Recipes", "Delete one of your own recipes, rubs or setups (it stays in the file history).",
      {"kind": "rub", "id": "coffee-chilli"}),
     ("GET", "/api/settings", "Settings", "Current settings. Secrets are never returned, only whether they are set.", None),
     ("POST", "/api/settings", "Settings", "Change settings. Leave a secret out to keep the saved one.",
@@ -48,13 +48,22 @@ ENDPOINTS = [
     ("GET", "/healthz", "Agents", "Liveness check. No token needed.", None),
 ]
 ENDPOINTS += [
-    ("POST", "/api/yaml", "Recipes", "Save a recipe or rub from its YAML text, kept exactly as typed.",
+    ("POST", "/api/yaml", "Recipes", "Save a recipe, rub or setup (kind) from its YAML text, kept exactly as typed.",
      {"kind": "rub", "yaml": "apiVersion: openbrisket/v1\nkind: Rub\nname: plain\ningredients:\n  - {name: salt, parts: 1, kind: salt}\n",
       "change": "why it changed"}),
     ("GET", "/api/tokens", "Settings", "Minted tokens: name, rights and date. Never their values.", None),
     ("POST", "/api/tokens", "Settings", "Mint a token with read, write or admin rights. The value is shown once.",
      {"name": "kitchen display", "scope": "read"}),
     ("POST", "/api/tokens/revoke", "Settings", "Revoke a minted token by its id.", {"id": "1a2b3c4d"}),
+    ("GET", "/api/setups", "Setups", "Every pit setup: smoker, fuel, wood, water pan, vents, source, and results per version.", None),
+    ("POST", "/api/setups", "Setups", "Add or change one of your own pit setups. A changed setup gets the next version.",
+     {"name": "kamado-lump-oak", "smoker": {"type": "kamado", "model": "Classic"},
+      "fuel": {"type": "lump-charcoal", "brand": "", "amount_kg": 4, "layout": "full basket, lit in one spot on top",
+               "lit_with": "one firelighter"},
+      "wood": [{"species": "post oak", "form": "chunks", "pieces": 4, "when": "buried through the charcoal"}],
+      "water_pan": "none", "airflow": {"controller": "fan", "deflector": True, "top_vent": "one finger open"},
+      "change": "why it changed"}),
+    ("GET", "/api/setups/vocabulary", "Setups", "The allowed kinds of smoker, fuel, wood form and air control.", None),
 ]
 PUBLIC = {"/healthz", "/api/openapi.json"}
 ADMIN = {"/api/settings", "/api/settings/test-source", "/api/settings/test-notify", "/api/delete", "/api/tokens",
@@ -96,7 +105,7 @@ def spec() -> dict:
     return {
         "openapi": "3.0.3",
         "info": {"title": "OpenBrisket", "version": __version__,
-                 "description": "BBQ as Code. Follow a barbecue cook, keep recipes and rubs as files with history. "
+                 "description": "BBQ as Code. Follow a barbecue cook, keep recipes, rubs and pit setups as files with history. "
                                 "Temperatures are in degrees Celsius."},
         "components": {"securitySchemes": {"token": {"type": "http", "scheme": "bearer",
                                                      "description": "The access token from the Settings page (admin), "

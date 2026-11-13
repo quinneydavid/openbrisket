@@ -258,8 +258,14 @@ function loginView() {
   input.focus();
 }
 
-function startForm(recipes, reading, sources) {
+function startForm(recipes, reading, sources, setups) {
   const valid = recipes.filter((r) => r.valid);
+  const rigs = (setups || []).filter((x) => x.valid);
+  const rig = h("select", { id: "f-setup" }, h("option", { value: "" }, "not recorded"), rigs.map((x) => h("option", { value: x.id, selected: x.last_used }, `${x.name} v${x.version}`)));
+  const rigHint = h("p", { class: "hint" });
+  const rigSync = () => { const x = rigs.find((q) => q.id === rig.value);
+    rigHint.textContent = x ? x.fire + "." : "Smoker, fuel and wood are not recorded for this cook. Define them once under Setups."; };
+  rig.addEventListener("change", rigSync); rigSync();
   const sel = h("select", { id: "f-recipe" }, valid.map((r) => h("option", { value: r.id }, `${r.name} v${r.version}`)));
   const weight = h("input", { id: "f-weight", type: "number", step: "0.1", min: "0.1", inputmode: "decimal", placeholder: "5.4" });
   const serve = h("input", { id: "f-serve", type: "datetime-local", required: true });
@@ -278,7 +284,7 @@ function startForm(recipes, reading, sources) {
     const chosen = picks.filter((p) => p.box.checked);
     const labels = {};
     for (const p of chosen) if (p.name.value.trim()) labels[p.no] = p.name.value.trim();
-    return { recipe: sel.value, weight_kg: weight.value ? Number(weight.value) : null, serve_at: serve.value,
+    return { recipe: sel.value, weight_kg: weight.value ? Number(weight.value) : null, serve_at: serve.value, setup: rig.value || null,
       probes: chosen.map((p) => p.no), probe_labels: labels };
   };
   const hint = h("p", { class: "hint" });
@@ -301,6 +307,8 @@ function startForm(recipes, reading, sources) {
       h("div", {}, h("label", { for: "f-weight" }, "Raw weight, kg"), weight),
       h("div", {}, h("label", { for: "f-serve" }, "Serving time"), serve),
       h("div", { class: "field-wide" }, hint),
+      h("div", {}, h("label", { for: "f-setup" }, "Pit setup"), rig),
+      h("div", { class: "field-wide" }, rigHint),
       h("div", { class: "field-wide" }, h("label", {}, "Probes in the food"), h("div", { class: "probe-pick" }, picks.map((p) => p.row)),
         probeHint)),
     h("div", { class: "actions" },
@@ -318,7 +326,8 @@ function cookView(st, detail) {
   const size = c.weight_kg ? `${c.weight_kg} kg` : "sized by time";
   const head = h("div", {}, h("div", { class: "title-row" }, h("h1", {}, h("b", {}, c.recipe), " ", h("span", { class: "muted" }, `v${c.recipe_version}`)),
     h("span", { class: "badge open" }, "Open"), h("span", { class: "badge" }, c.hold ? "resting / holding" : c.phase + (c.wrapped ? ", wrapped" : "")), h("span", { class: "badge" }, c.style)),
-    h("p", { class: "sub mono" }, `${c.id} · ${c.cut} · ${size}` + (c.serve_at ? ` · serving ${dayClock(c.serve_at)}` : "")));
+    h("p", { class: "sub mono" }, `${c.id} · ${c.cut} · ${size}` + (c.serve_at ? ` · serving ${dayClock(c.serve_at)}` : "")),
+    c.setup ? h("p", { class: "sub" }, h("a", { href: "#setups" }, `${c.setup.name} v${c.setup.version}`), ": " + c.setup.fire) : null);
 
   const sym = { done: "✓", active: "●", pending: "", failed: "✕", skipped: "–" };
   const pipe = h("ol", { class: "pipeline", "aria-label": "Stages of the cook" }, c.pipeline.map((p) =>
@@ -379,6 +388,8 @@ function cookView(st, detail) {
       !on ? stepBtn("meat-on", "Meat on", true) : null,
       on && !resting && !c.wrapped && t.wrap_at_c !== null ? stepBtn("wrap", "Wrap") : null,
       on && !resting ? stepBtn("spritz", "Spritz") : null,
+      !resting ? stepBtn("fuel", "Fuel added") : null,
+      !resting ? stepBtn("wood", "Wood added") : null,
       on && !resting && c.rests ? stepBtn("rest", "Off, resting / holding", true) : null,
       stepBtn("note", "Add note")),
     smokeOut));
@@ -386,13 +397,15 @@ function cookView(st, detail) {
   const score = h("input", { id: "f-score", type: "number", min: "0", max: "10", step: "0.5", inputmode: "decimal" });
   const cooked = h("input", { id: "f-cooked", type: "number", min: "0", step: "0.1", inputmode: "decimal" });
   const notes = h("input", { id: "f-notes", type: "text" });
+  const burnt = h("input", { id: "f-burnt", type: "number", min: "0", step: "0.1", inputmode: "decimal" });
   const close = box("Close the cook", h("div", { class: "body" },
     h("div", { class: "fields" }, h("div", {}, h("label", { for: "f-score" }, "Score, 0 to 10"), score),
       h("div", {}, h("label", { for: "f-cooked" }, "Cooked weight, kg"), cooked),
+      h("div", {}, h("label", { for: "f-burnt" }, "Fuel burnt, kg"), burnt),
       h("div", { class: "field-wide" }, h("label", { for: "f-notes" }, "What to change next time"), notes)),
     h("div", { class: "actions" },
       h("button", { type: "button", class: "primary", onclick: (ev) => act(ev.target, async () => {
-        await api("/api/close", { score: score.value ? Number(score.value) : null, cooked_weight_kg: cooked.value ? Number(cooked.value) : null, notes: notes.value });
+        await api("/api/close", { score: score.value ? Number(score.value) : null, cooked_weight_kg: cooked.value ? Number(cooked.value) : null, fuel_used_kg: burnt.value ? Number(burnt.value) : null, notes: notes.value });
         location.hash = "#history"; }) }, "Merge cook"),
       h("button", { type: "button", class: "danger", onclick: (ev) => { if (confirm("Close this cook as abandoned? Its log is kept.")) act(ev.target, async () => {
         await api("/api/close", { abandon: true, notes: notes.value }); location.hash = "#history"; }); } }, "Abandon"))));
@@ -408,11 +421,11 @@ async function renderCook(force) {
   live.hidden = false;
   live.textContent = st.reading && st.reading.pit_c !== null ? `pit ${st.reading.pit_c.toFixed(0)} °C` : (st.source_error ? "no readings" : "waiting for readings");
   if (!st.cook) {
-    const recipes = await api("/api/recipes");
+    const [recipes, setups] = await Promise.all([api("/api/recipes"), api("/api/setups")]);
     if (!force && main.querySelector("#f-recipe")) return;      // do not wipe a form being filled in
     show(h("h1", {}, "No cook is open"),
       st.source_error ? msg("No readings: " + st.source_error + " Check Settings.", "err") : null,
-      startForm(recipes, st.reading, st.probe_sources));
+      startForm(recipes, st.reading, st.probe_sources, setups));
     return;
   }
   const now = Date.now();
@@ -567,7 +580,8 @@ function recipeForm(r, rubs, styles) {
 // The file itself: for people who would rather edit the YAML than fill in the form.
 function yamlForm(kind, item) {
   const area = h("textarea", { id: "y-text", rows: String(Math.min(40, Math.max(14, item.source.split("\n").length + 2))), spellcheck: "false", "aria-label": "YAML" }, item.source);
-  return box(`Edit YAML: ${kind === "rub" ? "rubs/" : ""}${item.id}.yaml`, h("div", { class: "body" },
+  const back = kind === "setup" ? "#setups" : "#recipes";
+  return box(`Edit YAML: ${{ rub: "rubs/", setup: "setups/" }[kind] || ""}${item.id}.yaml`, h("div", { class: "body" },
     item.own ? null : msg(`This is a built-in ${kind}. Saving makes your own copy, which is then used in its place.`),
     area,
     h("p", { class: "hint" }, "Saved exactly as typed, comments included. It is checked first, so a mistake is refused with the reason. If you change the content and leave the version line alone, the version is moved on for you."),
@@ -576,8 +590,8 @@ function yamlForm(kind, item) {
       h("button", { type: "button", class: "primary", onclick: (ev) => act(ev.target, async () => {
         const out = await api("/api/yaml", { kind, yaml: area.value, change: fv("y-change") });
         if (out.warnings && out.warnings.length) { alert("Saved, with a warning:\n\n" + out.warnings.join("\n")); }
-        location.hash = "#recipes"; await route(); }) }, "Save YAML"),
-      h("button", { type: "button", onclick: () => { location.hash = "#recipes"; } }, "Cancel"))));
+        location.hash = back; await route(); }) }, "Save YAML"),
+      h("button", { type: "button", onclick: () => { location.hash = back; } }, "Cancel"))));
 }
 
 function historyButton(kind, id, holder) {
@@ -585,7 +599,7 @@ function historyButton(kind, id, holder) {
     const entries = await api(`/api/history/${kind}/${encodeURIComponent(id)}`);
     holder.replaceChildren(entries.length ? h("ul", { class: "rows history" }, entries.map((e) => h("li", {},
       h("span", { class: "time" }, new Date(e.at).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })),
-      h("div", { class: "msgtext" }, h("div", {}, e.message.replace(/^(recipe|rub) \S+ /, "").replace(/^(\S+): /, "v$1: ")),
+      h("div", { class: "msgtext" }, h("div", {}, e.message.replace(/^(recipe|rub|setup) \S+ /, "").replace(/^(\S+): /, "v$1: ")),
         e.created ? h("div", { class: "muted" }, "first version") : e.deleted ? h("div", { class: "muted" }, "deleted") :
         e.changes.length ? h("ul", { class: "changes" }, e.changes.map((c) => h("li", {}, h("b", {}, c.field), ": ",
           c.before === null ? h("span", { class: "muted" }, "added") : h("span", { class: "was" }, c.before), " → ",
@@ -660,6 +674,114 @@ async function renderRecipes(arg) {
         h("details", {}, h("summary", {}, "rubs/" + r.id + ".yaml"), h("pre", {}, r.source))); }));
 }
 
+// Pit setups: what the fire is built from (smoker, fuel, wood, water pan, vents). Files with history, like recipes.
+const words = (t) => String(t || "").replace(/-/g, " ");
+function setupForm(su, vocab) {
+  const fresh = !su;
+  su = su || { name: "", version: "", description: "", smoker: { type: "kamado" }, fuel: { type: "lump-charcoal" }, wood: [{}], water_pan: null, airflow: { controller: "fan" }, notes: "" };
+  const air = su.airflow || {};
+  const group = (title, hint, ...kids) => h("fieldset", { class: "group" }, h("legend", {}, title), hint ? h("p", { class: "hint" }, hint) : null, h("div", { class: "fields" }, kids));
+  const opts = (list) => list.map((x) => [x, words(x)]);
+  const rows = h("div", { class: "ing-rows" });
+  const addWood = (w) => {
+    w = w || {};
+    const row = h("div", { class: "ing wood" },
+      h("input", { type: "text", class: "w-species", value: w.species || "", placeholder: "wood, e.g. post oak", "aria-label": "Wood" }),
+      h("select", { class: "w-form", "aria-label": "Form" }, vocab.wood_forms.map((f) => h("option", { value: f, selected: (w.form || "chunks") === f }, f))),
+      h("input", { type: "number", class: "w-pieces", value: w.pieces ?? "", placeholder: "pieces", step: "1", min: "0", inputmode: "decimal", "aria-label": "Pieces" }),
+      h("input", { type: "number", class: "w-grams", value: w.grams ?? "", placeholder: "grams", step: "10", min: "0", inputmode: "decimal", "aria-label": "Grams" }),
+      h("input", { type: "text", class: "w-when", value: w.when || "", placeholder: "where or when it goes on", "aria-label": "When" }),
+      h("button", { type: "button", "aria-label": "Remove wood", onclick: () => row.remove() }, "Remove"));
+    rows.append(row);
+  };
+  (su.wood && su.wood.length ? su.wood : [{}]).forEach(addWood);
+  return box(fresh ? "New setup" : `Edit setup: ${su.name}`, h("div", { class: "body" },
+    !fresh && !su.own ? msg("This is a built-in setup. Saving makes your own copy, which is then used in its place.") : null,
+    group("What it is", null,
+      field("u-name", "Name", su.name, { placeholder: "kamado-lump-oak" }),
+      field("u-desc", "Description", su.description, { placeholder: "what this setup is for" })),
+    group("Smoker", null,
+      field("u-smoker", "Kind", su.smoker.type, { options: opts(vocab.smokers) }),
+      field("u-model", "Model", su.smoker.model, { placeholder: "make and size" })),
+    group("Fuel", "What burns, how much goes in, and how the fire is laid and lit.",
+      field("u-fuel", "Kind", su.fuel.type, { options: opts(vocab.fuels) }),
+      field("u-brand", "Brand", su.fuel.brand, { placeholder: "brand and type of charcoal" }),
+      field("u-kg", "Amount, kg", su.fuel.amount_kg, { type: "number", step: "0.1", min: "0" }),
+      field("u-lit", "Lit with", su.fuel.lit_with, { placeholder: "one firelighter, half a chimney ..." }),
+      field("u-layout", "How it is laid", su.fuel.layout, { wide: true, placeholder: "full basket lit in one spot, snake, minion ..." })),
+    h("fieldset", { class: "group" }, h("legend", {}, "Smoking wood"), rows,
+      h("p", { class: "hint" }, "One line per kind of wood. Give pieces or grams, whichever you count."),
+      h("div", { class: "actions" }, h("button", { type: "button", onclick: () => addWood() }, "Add wood"))),
+    group("Water and air", null,
+      field("u-pan", "Water pan", su.water_pan || "", { placeholder: "empty = none; or water, juice" }),
+      field("u-ctrl", "Air control", air.controller || "", { options: [["", "not said"]].concat(opts(vocab.controllers)) }),
+      field("u-defl", "Heat deflector", air.deflector === true ? "true" : air.deflector === false ? "false" : "", { options: [["", "not said"], ["true", "in"], ["false", "out"]] }),
+      field("u-top", "Top vent", air.top_vent, { placeholder: "one finger open" }),
+      field("u-bottom", "Bottom vent", air.bottom_vent, { placeholder: "closed, the fan feeds the fire" }),
+      field("u-notes", "Notes", su.notes, { wide: true, placeholder: "anything else that is always the same with this setup" })),
+    fresh ? null : h("div", { class: "fields block-label" }, field("u-change", "What changed and why", "", { wide: true, placeholder: "pit ran smoky, two chunks fewer",
+      hint: `Becomes the commit message. Now at version ${su.version}; a changed setup gets the next number. Change one thing at a time and the results per version tell you what it did.` })),
+    h("div", { class: "actions" },
+      h("button", { type: "button", class: "primary", onclick: (ev) => act(ev.target, async () => {
+        const num = (el) => (el.value === "" ? null : Number(el.value));
+        const wood = [...rows.querySelectorAll(".wood")].map((x) => ({ species: x.querySelector(".w-species").value.trim(), form: x.querySelector(".w-form").value,
+          pieces: num(x.querySelector(".w-pieces")), grams: num(x.querySelector(".w-grams")), when: x.querySelector(".w-when").value.trim() }));
+        await api("/api/setups", { name: fv("u-name"), version: su.version, description: fv("u-desc"),
+          smoker: { type: fv("u-smoker"), model: fv("u-model") },
+          fuel: { type: fv("u-fuel"), brand: fv("u-brand"), amount_kg: fnum("u-kg"), layout: fv("u-layout"), lit_with: fv("u-lit") },
+          wood, water_pan: fv("u-pan"),
+          airflow: { controller: fv("u-ctrl"), deflector: fv("u-defl") === "" ? null : fv("u-defl") === "true", top_vent: fv("u-top"), bottom_vent: fv("u-bottom") },
+          notes: fv("u-notes"), change: fresh ? "" : fv("u-change") });
+        location.hash = "#setups"; await route(); }) }, "Save setup"),
+      h("button", { type: "button", onclick: () => { location.hash = "#setups"; } }, "Cancel"))));
+}
+const woodLine = (w) => [w.pieces !== undefined && w.pieces !== null ? w.pieces : null, w.species, w.form].filter((x) => x !== null && x !== undefined && x !== "").join(" ").replace(/^(1 .*)(chunk|split)s$/, "$1$2") +
+  (w.grams !== undefined && w.grams !== null ? ` (${w.grams} g)` : "") + (w.when ? `, ${w.when}` : "");
+function setupFacts(su) {
+  const air = su.airflow || {}, fuel = su.fuel || {}, smoker = su.smoker || {};
+  return h("dl", { class: "kv" },
+    h("dt", {}, "Smoker"), h("dd", {}, words(smoker.type) + (smoker.model ? `, ${smoker.model}` : "")),
+    h("dt", {}, "Fuel"), h("dd", {}, [fuel.amount_kg !== undefined && fuel.amount_kg !== null ? `${fuel.amount_kg} kg` : null, words(fuel.type), fuel.brand ? `(${fuel.brand})` : null].filter(Boolean).join(" ")),
+    fuel.layout ? [h("dt", {}, "Laid"), h("dd", {}, fuel.layout)] : null,
+    fuel.lit_with ? [h("dt", {}, "Lit with"), h("dd", {}, fuel.lit_with)] : null,
+    h("dt", {}, "Wood"), h("dd", {}, su.wood && su.wood.length ? su.wood.map(woodLine).join("; ") : "none"),
+    h("dt", {}, "Water pan"), h("dd", {}, su.water_pan && su.water_pan !== "none" ? String(su.water_pan) : "none"),
+    air.controller ? [h("dt", {}, "Air control"), h("dd", {}, words(air.controller))] : null,
+    air.deflector !== undefined && air.deflector !== null ? [h("dt", {}, "Heat deflector"), h("dd", {}, air.deflector ? "in" : "out")] : null,
+    air.top_vent ? [h("dt", {}, "Top vent"), h("dd", {}, air.top_vent)] : null,
+    air.bottom_vent ? [h("dt", {}, "Bottom vent"), h("dd", {}, air.bottom_vent)] : null,
+    su.notes ? [h("dt", {}, "Notes"), h("dd", {}, su.notes)] : null);
+}
+async function renderSetups(arg) {
+  const [setups, vocab] = await Promise.all([api("/api/setups"), api("/api/setups/vocabulary")]);
+  if (arg === "new") return show(setupForm(null, vocab));
+  if (arg && arg.startsWith("yaml:")) {
+    const su = setups.find((x) => x.id === arg.slice(5));
+    return show(su && su.valid ? yamlForm("setup", su) : msg("No such setup.", "err"));
+  }
+  if (arg && arg.startsWith("edit:")) {
+    const su = setups.find((x) => x.id === arg.slice(5));
+    return show(su && su.valid ? setupForm(su, vocab) : msg("No such setup.", "err"));
+  }
+  const dash = (v, unit) => (v === null || v === undefined) ? "–" : v + (unit || "");
+  show(h("div", { class: "title-row" }, h("h1", {}, "Setups"), h("span", { class: "push" }), h("a", { class: "btn primary", href: "#setups/new" }, "New setup")),
+    h("p", { class: "sub" }, "A setup is what the fire is built from: the smoker, the charcoal and how it is laid, the wood, the water pan, the vents. It is a YAML file like a recipe. Pick one when you open a cook; the cook keeps a copy, and finished cooks are listed here against the version they ran on."),
+    setups.length ? null : h("div", { class: "empty" }, "No setups yet."),
+    setups.map((su) => { const hist = h("div", {}); return !su.valid ? box(su.id, h("div", { class: "body" }, msg(su.error, "err"), su.own ? h("div", { class: "actions" }, h("a", { class: "btn", href: "#setups/yaml:" + encodeURIComponent(su.id) }, "Edit YAML"), removeButton("setup", su.id)) : null)) :
+      box(h("div", { class: "title-row" }, h("h2", {}, su.name), h("span", { class: "badge" }, "v" + su.version), h("span", { class: "badge" }, su.own ? "yours" : "built-in"),
+          su.last_used ? h("span", { class: "badge open" }, "last used") : null, h("span", { class: "muted mono" }, `${words(su.smoker.type)} · ${words(su.fuel.type)}`)),
+        h("div", { class: "body" }, su.description ? h("p", { class: "sub" }, su.description) : null, setupFacts(su),
+          su.results.length ? h("div", { class: "scroll results" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Version"), h("th", {}, "Cooks"), h("th", {}, "Average score"), h("th", {}, "Pit varied"), h("th", {}, "Fuel an hour"), h("th", {}, "Cooks on this version"))),
+            h("tbody", {}, su.results.map((v) => h("tr", {}, h("td", {}, "v" + v.version + (v.version === su.version ? " (current)" : "")), h("td", {}, v.count),
+              h("td", {}, dash(v.avg_score)), h("td", {}, v.avg_pit_stdev_c === null ? "–" : `±${v.avg_pit_stdev_c} °C`), h("td", {}, dash(v.avg_kg_per_hour, " kg")),
+              h("td", { class: "links" }, v.cooks.map((c, i) => [i ? ", " : "", h("a", { href: "#history/" + encodeURIComponent(c.id) }, (c.opened_at || "").slice(0, 10) + " " + c.recipe + (c.score !== null && c.score !== undefined ? ` (${c.score})` : ""))]))))))) :
+            h("p", { class: "hint" }, "No finished cooks on this setup yet. Results will be listed here by setup version: score, how steady the pit ran, fuel burnt."),
+          h("div", { class: "actions" }, h("a", { class: "btn", href: "#setups/edit:" + encodeURIComponent(su.id) }, su.own ? "Edit" : "Customise"),
+            h("a", { class: "btn", href: "#setups/yaml:" + encodeURIComponent(su.id) }, "Edit YAML"),
+            historyButton("setup", su.id, hist), su.own ? removeButton("setup", su.id) : null), hist),
+        h("details", {}, h("summary", {}, "setups/" + su.id + ".yaml"), h("pre", {}, su.source))); }));
+}
+
 function cookGraph(cooks) {
   const counts = {};
   for (const c of cooks) { const d = (c.opened_at || "").slice(0, 10); if (d) counts[d] = (counts[d] || 0) + 1; }
@@ -707,12 +829,14 @@ async function renderHistory(id) {
     show(h("p", { class: "sub" }, h("a", { href: "#history" }, "← History")),
       h("div", { class: "title-row" }, h("h1", {}, h("b", {}, m.id)), h("span", { class: "badge " + m.status }, m.status === "done" ? "Merged" : m.status === "open" ? "Open" : "Abandoned")),
       m.probes && m.probes.some((p) => p.source) ? h("p", { class: "sub" }, "Probes: " + m.probes.map((p) => `${p.label} = ${p.source || "probe " + p.no}`).join(", ")) : null,
-      h("p", { class: "sub mono" }, `${m.recipe_name} v${m.recipe_version}` + (m.rub ? ` · rub ${m.rub.name} v${m.rub.version}` : "") + (m.weight_kg ? ` · ${m.weight_kg} kg` : "") + ` · opened ${fullDate(m.opened_at)}`),
+      h("p", { class: "sub mono" }, `${m.recipe_name} v${m.recipe_version}` + (m.rub ? ` · rub ${m.rub.name} v${m.rub.version}` : "") + (m.setup ? ` · setup ${m.setup.name} v${m.setup.version}` : "") + (m.weight_kg ? ` · ${m.weight_kg} kg` : "") + ` · opened ${fullDate(m.opened_at)}`),
       box("Result", h("div", { class: "body" }, h("dl", { class: "kv" },
         h("dt", {}, "Score"), h("dd", {}, res.score !== undefined ? `${res.score} / 10` : "–"),
         h("dt", {}, "Yield"), h("dd", {}, res.yield ? `${Math.round(res.yield * 100)}% (${res.cooked_weight_kg} kg cooked)` : "–"),
+        res.fuel_used_kg !== undefined ? [h("dt", {}, "Fuel burnt"), h("dd", {}, `${res.fuel_used_kg} kg`)] : null,
         h("dt", {}, "Notes"), h("dd", {}, res.notes || "–"),
         h("dt", {}, "Closed"), h("dd", {}, m.closed_at ? fullDate(m.closed_at) : "–")))),
+      m.setup ? box(`Setup: ${m.setup.name} v${m.setup.version}`, h("div", { class: "body" }, setupFacts(m.setup))) : null,
       analysisBox(m.analysis, d.curve),
       chartBox(d.curve, { probes: m.probes }, "Temperature"), box(`Commits (${d.events.length})`, eventLog(d.events)));
     return;
@@ -769,7 +893,7 @@ async function renderApi() {
   show(h("div", { class: "title-row" }, h("h1", {}, "API"), h("span", { class: "badge" }, "v" + spec.info.version), h("span", { class: "push" }),
       h("a", { class: "btn", href: "/api/openapi.json", target: "_blank", rel: "noopener" }, "openapi.json")),
     h("p", { class: "sub" }, "Everything the page does goes through these calls. Send a token as ", h("code", {}, "Authorization: Bearer <access token>"), ". The OpenAPI document opens in Swagger and similar tools."),
-    ["Cook", "History", "Recipes", "Settings", "Agents"].filter((g) => groups[g]).map((g) => box(g, groups[g].map(row))));
+    ["Cook", "History", "Recipes", "Setups", "Settings", "Agents"].filter((g) => groups[g]).map((g) => box(g, groups[g].map(row))));
 }
 
 async function renderSettings() {
@@ -838,6 +962,7 @@ async function refresh(force) {
   const tab = cut < 0 ? hash : hash.slice(0, cut), arg = cut < 0 ? null : hash.slice(cut + 1);
   try {
     if (tab === "recipes") await renderRecipes(arg ? decodeURIComponent(arg) : null);
+    else if (tab === "setups") await renderSetups(arg ? decodeURIComponent(arg) : null);
     else if (tab === "history") await renderHistory(arg ? decodeURIComponent(arg) : null);
     else if (tab === "settings") await renderSettings();
     else if (tab === "api") await renderApi();

@@ -380,7 +380,7 @@ def load_recipe(path: str, rub_dirs: list[str] | None = None) -> Recipe:
 
 
 def validate_tree(root: str) -> dict[str, list[str]]:
-    """Validate every recipe and rub under `root`. Returns {path: problems} for files with problems."""
+    """Validate every recipe, rub and pit setup under `root`. Returns {path: problems} for files with problems."""
     bad: dict[str, list[str]] = {}
     for dirpath, _dirs, files in os.walk(root):
         for name in sorted(files):
@@ -397,8 +397,11 @@ def validate_tree(root: str) -> dict[str, list[str]]:
                 problems = validate_recipe(doc, dirpath)
             elif kind == "Rub":
                 problems = validate_rub(doc)
+            elif kind == "Setup":
+                from .setups import validate_setup
+                problems = validate_setup(doc)
             else:
-                problems = ["kind must be Recipe or Rub"]
+                problems = ["kind must be Recipe, Rub or Setup"]
             if problems:
                 bad[path] = problems
     return bad

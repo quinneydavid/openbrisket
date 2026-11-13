@@ -1,0 +1,26 @@
+apiVersion: openbrisket/v1
+kind: Setup
+name: kamado-lump-oak
+version: 1.0.0
+description: Ceramic kamado on lump charcoal with oak chunks and a fan controller. A long, steady overnight fire.
+
+smoker:
+  type: kamado
+  model: 18 inch ceramic
+
+fuel:
+  type: lump-charcoal
+  amount_kg: 4            # a full basket; a kamado burns little, most of it is left over
+  layout: full basket, large pieces at the bottom, lit in one spot on top
+  lit_with: one firelighter
+
+wood:
+  - {species: post oak, form: chunks, pieces: 4, when: buried through the charcoal so they catch one after another}
+
+water_pan: none           # a kamado holds moisture by itself
+
+airflow:
+  controller: fan
+  deflector: true
+  top_vent: one finger open
+  bottom_vent: closed, the fan feeds the fire

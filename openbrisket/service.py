@@ -13,11 +13,12 @@ from datetime import datetime, timezone
 
 import yaml
 
-from . import checks as checkmod, library, notify, plan as planmod, recipes, settings, smoketest, sources
+from . import checks as checkmod, library, notify, plan as planmod, recipes, settings, setups, smoketest, sources
 from .cook import Engine
 from .store import MAX_PROBES, Store
 
-STEPS = ("meat-on", "wrap", "spritz", "rest", "note")
+STEPS = ("meat-on", "wrap", "spritz", "fuel", "wood", "rest", "note")
+KINDS = ("recipe", "rub", "setup")
 
 # What a token may do. Each level includes the ones before it.
 #   read   look: status, recipes, rubs, history, cooks, plans
@@ -284,7 +285,8 @@ class Service:
                 "score": res.get("score"), "yield": res.get("yield"), "notes": res.get("notes"),
                 "hours_to_target": an.get("hours_to_target"), "hours_on_pit": an.get("hours_on_pit"),
                 "k_ratio": (an.get("model") or {}).get("k_ratio"),
-                "rub": (m.get("rub") or {}).get("name"), "rub_version": (m.get("rub") or {}).get("version")})
+                "rub": (m.get("rub") or {}).get("name"), "rub_version": (m.get("rub") or {}).get("version"),
+                "setup": (m.get("setup") or {}).get("name"), "setup_version": (m.get("setup") or {}).get("version")})
         out: dict[str, list[dict]] = {}
         for name, versions in by_recipe.items():
             rows = []
@@ -344,6 +346,112 @@ class Service:
         except recipes.RecipeError as e:
             raise ServiceError(str(e)) from None
 
+    # --- pit setups -------------------------------------------------------------------------------
+    def _setup_files(self) -> dict[str, str]:
+        found: dict[str, str] = {}
+        for d in self.recipe_dirs:                 # later folders win: your copy replaces a shipped setup
+            folder = os.path.join(d, "setups")
+            if not os.path.isdir(folder):
+                continue
+            for name in sorted(os.listdir(folder)):
+                if name.endswith((".yaml", ".yml")):
+                    found[os.path.splitext(name)[0]] = os.path.join(folder, name)
+        return found
+
+    def _setup_doc(self, setup_id: str) -> dict:
+        path = self._setup_files().get(library.slug(setup_id or ""))
+        if not path:
+            raise ServiceError(f"no setup called '{setup_id}'; there are: {', '.join(self._setup_files()) or 'none'}")
+        try:
+            with open(path, encoding="utf-8") as f:
+                doc = yaml.safe_load(f)
+        except (OSError, yaml.YAMLError) as e:
+            raise ServiceError(f"setup {setup_id}: {e}") from None
+        problems = setups.validate_setup(doc)
+        if problems:
+            raise ServiceError(f"setup {setup_id}: " + "; ".join(problems))
+        return doc
+
+    def setup_results(self) -> dict[str, list[dict]]:
+        """Finished cooks grouped by setup and then by setup version: what each version of a setup produced
+        (score, how steady the pit ran, how hard the fan worked, fuel burnt)."""
+        store = self.store()
+        by_setup: dict[str, dict[str, dict]] = {}
+        for cook_id in store.cooks():
+            m = store.meta(cook_id)
+            used = m.get("setup") or {}
+            if m.get("status") != "done" or not used.get("name"):
+                continue
+            res, an = m.get("result") or {}, m.get("analysis") or {}
+            v = by_setup.setdefault(used["name"], {}).setdefault(
+                str(used.get("version") or "?"), {"version": str(used.get("version") or "?"), "cooks": []})
+            v["cooks"].append({
+                "id": cook_id, "opened_at": m.get("opened_at"), "recipe": m.get("recipe_name"),
+                "score": res.get("score"), "fuel_used_kg": res.get("fuel_used_kg"),
+                "hours_on_pit": an.get("hours_on_pit"), "pit_stdev_c": (an.get("pit") or {}).get("stdev_c"),
+                "fuel_added": (an.get("events") or {}).get("fuel", 0),
+                "wood_added": (an.get("events") or {}).get("wood", 0)})
+        avg = lambda xs, digits=1: round(sum(xs) / len(xs), digits) if xs else None  # noqa: E731
+        out: dict[str, list[dict]] = {}
+        for name, versions in by_setup.items():
+            rows = []
+            for v in versions.values():
+                cooks = v["cooks"]
+                v["count"] = len(cooks)
+                v["avg_score"] = avg([c["score"] for c in cooks if c["score"] is not None])
+                v["avg_pit_stdev_c"] = avg([c["pit_stdev_c"] for c in cooks if c["pit_stdev_c"] is not None])
+                v["avg_kg_per_hour"] = avg([c["fuel_used_kg"] / c["hours_on_pit"] for c in cooks
+                                            if c["fuel_used_kg"] and c["hours_on_pit"]], 2)
+                v["first_cook"] = min(c["opened_at"] or "" for c in cooks)
+                rows.append(v)
+            out[name] = sorted(rows, key=lambda v: v["first_cook"])
+        return out
+
+    def last_setup(self) -> str | None:
+        """The setup the most recent cook was opened with, if it still exists: the default for the next cook."""
+        store, files = self.store(), self._setup_files()
+        for cook_id in reversed(store.cooks()):
+            used = (store.meta(cook_id).get("setup") or {}).get("id")
+            if used:
+                return used if used in files else None
+        return None
+
+    def list_setups(self) -> list[dict]:
+        results, last = self.setup_results(), self.last_setup()
+        out = []
+        for sid, path in sorted(self._setup_files().items()):
+            own = self._is_own(path)
+            try:
+                with open(path, encoding="utf-8") as f:
+                    source = f.read()
+                doc = yaml.safe_load(source)
+                problems = setups.validate_setup(doc)
+            except (OSError, yaml.YAMLError) as e:
+                problems = [str(e)]
+            if problems:
+                out.append({"id": sid, "valid": False, "error": "; ".join(problems), "own": own})
+                continue
+            out.append({
+                "id": sid, "valid": True, "own": own, "name": doc["name"], "version": str(doc.get("version", "1.0.0")),
+                "description": doc.get("description", ""), "smoker": doc.get("smoker") or {},
+                "fuel": doc.get("fuel") or {}, "wood": doc.get("wood") or [], "water_pan": setups.water_pan(doc),
+                "airflow": doc.get("airflow") or {}, "notes": doc.get("notes", ""),
+                "fire": setups.fire_line(doc), "last_used": sid == last, "source": source,
+                "results": results.get(doc["name"], []),
+            })
+        return out
+
+    def setup_vocabulary(self) -> dict:
+        return {"smokers": list(setups.SMOKERS), "fuels": list(setups.FUELS), "wood_forms": list(setups.WOOD_FORMS),
+                "controllers": list(setups.CONTROLLERS)}
+
+    def save_setup(self, form: dict) -> dict:
+        with self.lock:
+            try:
+                return library.save_setup(self.library_root(), form or {})
+            except library.LibraryError as e:
+                raise ServiceError(str(e)) from None
+
     def save_rub(self, form: dict) -> dict:
         with self.lock:
             try:
@@ -366,9 +474,9 @@ class Service:
             return out
 
     def save_yaml(self, kind: str, text: str, change: str = "") -> dict:
-        """Save a recipe or rub from its YAML text, exactly as typed (comments and layout are kept)."""
-        if kind not in ("recipe", "rub"):
-            raise ServiceError("kind is recipe or rub")
+        """Save a recipe, rub or setup from its YAML text, exactly as typed (comments and layout are kept)."""
+        if kind not in KINDS:
+            raise ServiceError("kind is recipe, rub or setup")
         with self.lock:
             try:
                 out = library.save_yaml(self.library_root(), kind, str(text or ""), self.recipe_dirs, str(change or ""))
@@ -380,8 +488,8 @@ class Service:
             return out
 
     def delete_item(self, kind: str, item_id: str) -> dict:
-        if kind not in ("recipe", "rub"):
-            raise ServiceError("kind is recipe or rub")
+        if kind not in KINDS:
+            raise ServiceError("kind is recipe, rub or setup")
         with self.lock:
             try:
                 library.delete(self.library_root(), kind, item_id)
@@ -390,18 +498,21 @@ class Service:
             return {"deleted": library.slug(item_id), "kind": kind}
 
     def item_history(self, kind: str, item_id: str) -> list[dict]:
+        if kind not in KINDS:
+            raise ServiceError("kind is recipe, rub or setup")
         try:
             return library.history(self.library_root(), kind, item_id)
         except library.LibraryError as e:
             raise ServiceError(str(e)) from None
 
-    def plan(self, recipe_id: str, weight_kg: float | None, serve_at: str) -> dict:
+    def plan(self, recipe_id: str, weight_kg: float | None, serve_at: str, setup: str | None = None) -> dict:
         recipe = self._recipe(recipe_id)
+        fire = setups.fire_line(self._setup_doc(setup)) if setup else None
         try:
-            p = planmod.make_plan(recipe, weight_kg, when(serve_at))
+            p = planmod.make_plan(recipe, weight_kg, when(serve_at), fire)
         except recipes.RecipeError as e:
             raise ServiceError(str(e)) from None
-        return {"recipe": recipe.name, "version": recipe.version, "weight_kg": weight_kg,
+        return {"recipe": recipe.name, "version": recipe.version, "weight_kg": weight_kg, "setup": setup or None,
                 "cook_hours": round(p.cook_hours, 2), "text": planmod.render(p),
                 "steps": [{"at": s.at.isoformat(timespec="minutes"), "step": s.what, "detail": s.detail}
                           for s in p.steps]}
@@ -454,15 +565,16 @@ class Service:
         return out
 
     def start(self, recipe_id: str, weight_kg: float | None, serve_at: str, probes=None,
-              probe_labels: dict | None = None) -> dict:
+              probe_labels: dict | None = None, setup: str | None = None) -> dict:
         with self.lock:
             recipe = self._recipe(recipe_id)
+            setup_doc = self._setup_doc(setup) if setup else None
             serve = when(serve_at)
             numbers = self._probes(probes, recipe.probe)
             labels = {n: str(v).strip()[:24] for n, v in ((int(k), v) for k, v in (probe_labels or {}).items())
                       if n in numbers and str(v).strip()}
             try:
-                p = planmod.make_plan(recipe, weight_kg, serve)
+                p = planmod.make_plan(recipe, weight_kg, serve, setups.fire_line(setup_doc) if setup_doc else None)
             except recipes.RecipeError as e:
                 raise ServiceError(str(e)) from None
             meta = {
@@ -480,6 +592,8 @@ class Service:
                 if view:
                     meta["rub"] = {"name": view["name"], "version": view["version"],
                                    "ingredients": view["ingredients"]}
+            if setup_doc:                        # the exact setup used: smoker, fuel, wood, vents
+                meta["setup"] = setups.snapshot(setup_doc, library.slug(setup))
             store = self.store()
             if store.active():
                 raise ServiceError(f"cook {store.active()} is still open; close it first")
@@ -556,7 +670,7 @@ class Service:
                     "text": smoketest.render(checks)}
 
     def close(self, score: float | None = None, cooked_weight_kg: float | None = None, notes: str = "",
-              abandon: bool = False) -> dict:
+              abandon: bool = False, fuel_used_kg: float | None = None) -> dict:
         with self.lock:
             e = self._need_engine()
             result: dict = {}
@@ -569,6 +683,14 @@ class Service:
                 raw = e.meta.get("weight_kg")
                 if raw:
                     result["yield"] = round(float(cooked_weight_kg) / float(raw), 3)
+            if fuel_used_kg is not None:
+                try:
+                    used = float(fuel_used_kg)
+                except (TypeError, ValueError):
+                    raise ServiceError("fuel_used_kg is a number of kilograms") from None
+                if not 0 <= used <= 100:
+                    raise ServiceError("fuel_used_kg is a number of kilograms")
+                result["fuel_used_kg"] = used
             if notes:
                 result["notes"] = notes
             status = "abandoned" if abandon else "done"
@@ -576,7 +698,8 @@ class Service:
             if analysis:
                 counts: dict = {}
                 for ev in e.store.events(e.cook_id):
-                    if ev["event"] in ("lid-open", "pit-drift", "fire-dying", "spritz", "probe-lost", "no-data", "behind"):
+                    if ev["event"] in ("lid-open", "pit-drift", "fire-dying", "spritz", "fuel", "wood", "probe-lost", "no-data",
+                                           "behind"):
                         counts[ev["event"]] = counts.get(ev["event"], 0) + 1
                 analysis["events"] = counts
                 meta = e.store.meta(e.cook_id)
@@ -609,6 +732,9 @@ class Service:
                 now_names = {s["no"]: s["name"] for s in sources_}
                 for p in cook["probes"]:
                     p["source"] = used.get(p["no"]) or now_names.get(p["no"])
+                cook["setup"] = e.meta.get("setup")
+                if cook["setup"]:
+                    cook["setup"] = {**cook["setup"], "fire": setups.fire_line(cook["setup"])}
             return {"now": _now().isoformat(timespec="seconds"), "reading": _reading_dict(r),
                     "source_error": self.last_error, "probe_sources": sources_, "cook": cook}
 
@@ -630,6 +756,7 @@ class Service:
             m = store.meta(cook_id)
             out.append({"id": cook_id, "recipe": m.get("recipe_name"), "version": m.get("recipe_version"),
                         "status": m.get("status"), "weight_kg": m.get("weight_kg"), "opened_at": m.get("opened_at"),
+                        "setup": (m.get("setup") or {}).get("name"),
                         "closed_at": m.get("closed_at"), "result": m.get("result") or {}})
         return out
 

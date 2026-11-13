@@ -1,0 +1,26 @@
+apiVersion: openbrisket/v1
+kind: Setup
+name: kettle-snake-hickory
+version: 1.0.0
+description: Kettle grill with a briquette snake and hickory, run by hand on the vents. Good for ribs and pork shoulder.
+
+smoker:
+  type: kettle
+  model: 57 cm kettle
+
+fuel:
+  type: briquettes
+  amount_kg: 2.5
+  layout: snake two wide and two high around half the rim
+  lit_with: 8 lit briquettes at one end
+
+wood:
+  - {species: hickory, form: chunks, pieces: 3, when: on the first third of the snake}
+
+water_pan: water          # in the middle of the snake, under the meat
+
+airflow:
+  controller: manual
+  deflector: false
+  top_vent: half open, over the meat
+  bottom_vent: a quarter open

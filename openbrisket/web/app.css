@@ -194,6 +194,8 @@ fieldset.group legend + * { clear: both; }
 fieldset.group > .hint { margin: 0 0 10px; }
 label.check { display: inline-flex; gap: 8px; align-items: center; font-weight: 400; font-size: 14px; margin: 0; }
 .ing.stage { grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1.6fr) auto; }
+.ing.wood { grid-template-columns: minmax(0, 1fr) 104px 84px 84px minmax(0, 1.4fr) auto; }
+@media (max-width: 720px) { .ing.wood { grid-template-columns: 1fr 1fr; } }
 code { font: 12px var(--mono); background: var(--subtle); border: 1px solid var(--border-soft); border-radius: 4px; padding: 1px 5px; }
 details.api { border-top: 1px solid var(--border-soft); }
 details.api:first-of-type { border-top: 0; }

@@ -9,13 +9,15 @@ import json
 
 from . import __version__
 from . import checks as checkmod
+from . import setups as setupmod
 from .service import STEPS, Service, ServiceError
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
 INSTRUCTIONS = (
     "OpenBrisket follows a barbecue cook against a recipe. It reads the pit and meat temperatures; it does "
-    "not control the fire. Typical order: list_recipes, plan_cook, start_cook, smoke_test once the pit is "
+    "not control the fire. Typical order: list_recipes, list_setups (the pit setup: smoker, fuel, wood), plan_cook, "
+    "start_cook with the recipe and the setup, smoke_test once the pit is "
     "steady, log_step meat-on, cook_status whenever asked (its `asks` list names photos the cook is waiting to "
     "be shown), record_check when you are sent a photo of the meat, log_step wrap / rest when the cook does them, "
     "close_cook with the score. Temperatures are in degrees Celsius. Times are local to the server unless "
@@ -29,6 +31,8 @@ def _obj(properties: dict, required: list[str] | None = None) -> dict:
 RECIPE = {"type": "string", "description": "Recipe id from list_recipes, e.g. texas-brisket"}
 WEIGHT = {"type": "number", "description": "Raw weight in kg. Needed for recipes sized by weight."}
 SERVE = {"type": "string", "description": "Serving time, e.g. 2026-11-14 18:00"}
+SETUP = {"type": "string", "description": "Pit setup id from list_setups (smoker, fuel, wood). Optional; the cook "
+                                          "keeps a copy, so results can be compared per setup."}
 
 TOOLS = [
     {"name": "cook_status",
@@ -45,9 +49,40 @@ TOOLS = [
     {"name": "recipe_history",
      "description": "Every saved version of one of the cook's own recipes or rubs, newest first: when, why (the "
                     "commit message) and exactly which fields changed from what to what. Combine with the `results` "
-                    "in list_recipes (cooks and scores per recipe version) to judge whether a change helped.",
-     "inputSchema": _obj({"kind": {"type": "string", "enum": ["recipe", "rub"]},
-                          "id": {"type": "string", "description": "Recipe or rub id"}}, ["kind", "id"])},
+                    "in list_recipes (cooks and scores per recipe version) to judge whether a change helped. "
+                    "Also works for pit setups (kind setup).",
+     "inputSchema": _obj({"kind": {"type": "string", "enum": ["recipe", "rub", "setup"]},
+                          "id": {"type": "string", "description": "Recipe, rub or setup id"}}, ["kind", "id"])},
+    {"name": "list_setups",
+     "description": "The pit setups available: smoker, fuel (kind, amount, how it is laid and lit), smoking wood, "
+                    "water pan and vents. Each has `results`: finished cooks per setup version with score, how "
+                    "steady the pit ran and fuel burnt. `last_used` marks the one the latest cook ran on.",
+     "inputSchema": _obj({})},
+    {"name": "save_setup",
+     "description": "Add or update one of the cook's own pit setups: what the fire is built from. Stored as a YAML "
+                    "file with a commit per save; a changed setup gets a new version number. Change one thing at a "
+                    "time when you can, so the results per version say what that change did.",
+     "inputSchema": _obj({
+         "name": {"type": "string", "description": "Short name, e.g. kamado-lump-oak"},
+         "description": {"type": "string"},
+         "smoker": _obj({"type": {"type": "string", "enum": list(setupmod.SMOKERS)},
+                         "model": {"type": "string"}}, ["type"]),
+         "fuel": _obj({"type": {"type": "string", "enum": list(setupmod.FUELS)}, "brand": {"type": "string"},
+                       "amount_kg": {"type": "number"},
+                       "layout": {"type": "string", "description": "How it is laid: full basket, snake, minion ..."},
+                       "lit_with": {"type": "string"}}, ["type"]),
+         "wood": {"type": "array", "items": _obj({
+             "species": {"type": "string", "description": "e.g. post oak, hickory, cherry"},
+             "form": {"type": "string", "enum": list(setupmod.WOOD_FORMS)},
+             "pieces": {"type": "number"}, "grams": {"type": "number"},
+             "when": {"type": "string", "description": "Where or when it goes on"}}, ["species", "form"])},
+         "water_pan": {"type": "string", "description": "none, or what is in it: water, apple juice, sand"},
+         "airflow": _obj({"controller": {"type": "string", "enum": list(setupmod.CONTROLLERS)},
+                          "deflector": {"type": "boolean"}, "top_vent": {"type": "string"},
+                          "bottom_vent": {"type": "string"}}),
+         "notes": {"type": "string"},
+         "change": {"type": "string", "description": "One line on what changed and why (the commit message)"}},
+         ["name", "smoker", "fuel"])},
     {"name": "save_rub",
      "description": "Add or update one of the cook's own rubs. Stored as a YAML file with a commit per save. "
                     "Ingredients are in parts (by volume or weight, the cook's choice, but all the same). Mark salt "
@@ -104,10 +139,11 @@ TOOLS = [
          ["name", "cut", "pit_target_c"])},
     {"name": "plan_cook",
      "description": "The full timeline for a cook, worked back from the serving time, without starting anything.",
-     "inputSchema": _obj({"recipe": RECIPE, "weight_kg": WEIGHT, "serve_at": SERVE}, ["recipe", "serve_at"])},
+     "inputSchema": _obj({"recipe": RECIPE, "weight_kg": WEIGHT, "serve_at": SERVE, "setup": SETUP},
+                         ["recipe", "serve_at"])},
     {"name": "start_cook",
      "description": "Open a cook from a recipe. Only one cook can be open at a time.",
-     "inputSchema": _obj({"recipe": RECIPE, "weight_kg": WEIGHT, "serve_at": SERVE,
+     "inputSchema": _obj({"recipe": RECIPE, "weight_kg": WEIGHT, "serve_at": SERVE, "setup": SETUP,
                           "probes": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 9},
                                      "description": "Which food probes are in the meat (default [1]). With several, "
                                                     "the coldest one decides when the meat is done."},
@@ -121,7 +157,8 @@ TOOLS = [
      "inputSchema": _obj({})},
     {"name": "log_step",
      "description": "Record something the cook did by hand. meat-on starts the clock; wrap and rest change how the "
-                    "cook is followed; spritz and note are just logged.",
+                    "cook is followed; spritz and note are just logged. fuel and wood record that more was added (say "
+                    "how much and what in the note); they are counted per cook and shown against the setup.",
      "inputSchema": _obj({"step": {"type": "string", "enum": list(STEPS)},
                           "note": {"type": "string", "description": "Optional detail; required for step=note"}},
                          ["step"])},
@@ -148,6 +185,7 @@ TOOLS = [
      "description": "Close the open cook with its result. abandon=true closes a cook that went wrong without a score.",
      "inputSchema": _obj({"score": {"type": "number", "description": "0 to 10"},
                           "cooked_weight_kg": {"type": "number"}, "notes": {"type": "string"},
+                          "fuel_used_kg": {"type": "number", "description": "Fuel burnt over the whole cook, if known"},
                           "abandon": {"type": "boolean"}})},
     {"name": "cook_history",
      "description": "Past cooks with recipe, weight and result. Give a cook id to get that cook's events instead.",
@@ -155,7 +193,7 @@ TOOLS = [
 ]
 
 
-READ_TOOLS = {"cook_status", "list_recipes", "list_rubs", "plan_cook", "cook_history", "recipe_history"}
+READ_TOOLS = {"cook_status", "list_recipes", "list_rubs", "list_setups", "plan_cook", "cook_history", "recipe_history"}
 
 
 def tools_for(scope: str) -> list[dict]:
@@ -173,15 +211,19 @@ def _call(service: Service, name: str, a: dict):
         return [{k: v for k, v in r.items() if k != "source"} for r in service.list_rubs()]
     if name == "recipe_history":
         return service.item_history(a.get("kind", ""), a.get("id", ""))
+    if name == "list_setups":
+        return [{k: v for k, v in r.items() if k != "source"} for r in service.list_setups()]
+    if name == "save_setup":
+        return service.save_setup(a)
     if name == "save_rub":
         return service.save_rub(a)
     if name == "save_recipe":
         return service.save_recipe(a)
     if name == "plan_cook":
-        return service.plan(a.get("recipe"), a.get("weight_kg"), a.get("serve_at"))
+        return service.plan(a.get("recipe"), a.get("weight_kg"), a.get("serve_at"), a.get("setup"))
     if name == "start_cook":
         return service.start(a.get("recipe"), a.get("weight_kg"), a.get("serve_at"), a.get("probes") or a.get("probe"),
-                             a.get("probe_labels"))
+                             a.get("probe_labels"), a.get("setup"))
     if name == "smoke_test":
         return service.smoke_test()
     if name == "log_step":
@@ -192,7 +234,8 @@ def _call(service: Service, name: str, a: dict):
         return service.record_check(a.get("check", ""), a.get("data"), a.get("verdict"), a.get("by", ""),
                                     a.get("note", ""))
     if name == "close_cook":
-        return service.close(a.get("score"), a.get("cooked_weight_kg"), a.get("notes", ""), bool(a.get("abandon")))
+        return service.close(a.get("score"), a.get("cooked_weight_kg"), a.get("notes", ""), bool(a.get("abandon")),
+                             a.get("fuel_used_kg"))
     if name == "cook_history":
         if a.get("cook"):
             c = service.cook(a["cook"])
